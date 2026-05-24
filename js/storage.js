@@ -47,8 +47,14 @@ export async function initStorage() {
 function _lsLoad() {
   try { return JSON.parse(localStorage.getItem(LEGACY_KEY) || '[]'); } catch { return []; }
 }
+
+// Throws StorageError on quota / write failure so callers can surface it.
 function _lsSave(arr) {
-  try { localStorage.setItem(LEGACY_KEY, JSON.stringify(arr)); } catch {}
+  try {
+    localStorage.setItem(LEGACY_KEY, JSON.stringify(arr));
+  } catch (e) {
+    throw new StorageError('שגיאה בשמירה — אחסון מלא?', e);
+  }
 }
 
 export async function loadSessions() {
@@ -56,42 +62,54 @@ export async function loadSessions() {
   return new Promise((resolve) => {
     const req = _db.transaction(STORE, 'readonly').objectStore(STORE).getAll();
     req.onsuccess = () => resolve((req.result || []).sort((a, b) => b.id - a.id));
-    req.onerror = () => resolve(_lsLoad());
+    req.onerror = () => resolve(_lsLoad()); // read failure: degrade gracefully
   });
 }
 
+// Throws StorageError on write failure so callers know not to clear the draft.
 export async function upsertSession(session) {
   if (_degraded || !_db) {
     const all = _lsLoad();
     const i = all.findIndex(s => s.id === session.id);
     if (i >= 0) all[i] = session; else all.unshift(session);
-    _lsSave(all);
+    _lsSave(all); // throws on localStorage failure
     return;
   }
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const tx = _db.transaction(STORE, 'readwrite');
     tx.objectStore(STORE).put(session);
     tx.oncomplete = resolve;
-    tx.onerror = resolve;
+    tx.onerror = () => reject(new StorageError('שגיאת אחסון — לא ניתן לשמור', tx.error));
   });
 }
 
+// Throws StorageError on write failure.
 export async function removeSession(id) {
   if (_degraded || !_db) {
-    _lsSave(_lsLoad().filter(s => s.id !== id));
+    const all = _lsLoad().filter(s => s.id !== id);
+    _lsSave(all); // throws on localStorage failure
     return;
   }
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const tx = _db.transaction(STORE, 'readwrite');
     tx.objectStore(STORE).delete(id);
     tx.oncomplete = resolve;
-    tx.onerror = resolve;
+    tx.onerror = () => reject(new StorageError('שגיאת אחסון — לא ניתן למחוק', tx.error));
   });
 }
 
+// Returns true on success, false on failure.  Never throws — draft saves are
+// best-effort and callers must check the return value before clearing the draft.
 export function saveDraft(text) {
-  try { localStorage.setItem(DRAFT_KEY, text); } catch {}
+  try {
+    localStorage.setItem(DRAFT_KEY, text);
+    return true;
+  } catch (e) {
+    console.warn('[storage] saveDraft failed:', e);
+    return false;
+  }
 }
+
 export function loadDraft() {
   try { return localStorage.getItem(DRAFT_KEY) || ''; } catch { return ''; }
 }
@@ -104,4 +122,13 @@ export function formatDate(d) {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
     hour: '2-digit', minute: '2-digit'
   });
+}
+
+// Typed error so callers can distinguish storage failures from logic errors.
+export class StorageError extends Error {
+  constructor(message, cause) {
+    super(message);
+    this.name = 'StorageError';
+    this.cause = cause;
+  }
 }

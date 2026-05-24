@@ -1,6 +1,6 @@
 import {
   initStorage, loadSessions, upsertSession, removeSession,
-  saveDraft, loadDraft, clearDraft, formatDate
+  saveDraft, loadDraft, clearDraft, formatDate, StorageError
 } from './storage.js';
 
 import { diagLog, copyDiagLog } from './diagnostics.js';
@@ -183,9 +183,15 @@ async function stopAndSave(autoStop = false) {
   if (autoStop) showToast('הפסקת דיבור — ההקלטה נעצרה');
   const text = els.transcript.value.trim();
   if (text) {
-    await persistCurrentSession(text);
-    clearDraft();
-    showToast('נשמר בהצלחה ✓');
+    try {
+      await persistCurrentSession(text);
+      clearDraft(); // only clear after confirmed write
+      showToast('נשמר בהצלחה ✓');
+    } catch (e) {
+      console.error('[app] save failed:', e);
+      showToast(e instanceof StorageError ? e.message : 'שגיאה בשמירה');
+      // draft is intentionally NOT cleared — user can retry or export manually
+    }
   }
 }
 
@@ -193,12 +199,16 @@ async function stopAndSave(autoStop = false) {
 recHandlers.onResult = (finalText, _sessionFinalText, interim) => {
   els.transcript.value = finalText + interim;
   els.transcript.scrollTop = els.transcript.scrollHeight;
-  // Persist immediately on new final text (not debounced) so the most recent
-  // confirmed speech is in the draft even if the app crashes between utterances.
-  // Interim text in the textarea is also included so recovery is as complete
-  // as possible — the recovery UI labels it as potentially unconfirmed.
-  if (finalText.trim()) saveDraft(finalText + interim);
-  else scheduleDraftSave(); // fallback for manual edits
+  // Persist immediately on new final text so the most recent confirmed speech
+  // is in the draft even if the app crashes between utterances.  Interim text
+  // is included so recovery is as complete as possible — the recovery UI warns
+  // the user it may contain unconfirmed speech.
+  if (finalText.trim()) {
+    const ok = saveDraft(finalText + interim);
+    if (!ok) showToast('אחסון מלא — לא ניתן לשמור טיוטה');
+  } else {
+    scheduleDraftSave();
+  }
 };
 
 recHandlers.onResetSilence = resetSilenceTimer;
@@ -288,10 +298,14 @@ uiCallbacks.onLoadSession = async (id) => {
 
 uiCallbacks.onDeleteSession = async (id) => {
   if (!confirm('למחוק הקלטה זו?')) return;
-  await removeSession(id);
-  const sessions = await loadSessions();
-  renderSessions(sessions);
-  showToast('נמחק');
+  try {
+    await removeSession(id);
+    const sessions = await loadSessions();
+    renderSessions(sessions);
+    showToast('נמחק');
+  } catch (e) {
+    showToast(e instanceof StorageError ? e.message : 'שגיאה במחיקה');
+  }
 };
 
 document.getElementById('btn-history').addEventListener('click', async () => {
@@ -417,10 +431,14 @@ document.getElementById('btn-recovery-save').addEventListener('click', async () 
   recoveryModal.style.display = 'none';
   els.transcript.value = draft;
   rec.finalText = draft;
-  await persistCurrentSession(draft);
-  clearDraft();
+  try {
+    await persistCurrentSession(draft);
+    clearDraft();
+    showToast('נשמר כהקלטה ✓');
+  } catch (e) {
+    showToast(e instanceof StorageError ? e.message : 'שגיאה בשמירה');
+  }
   showIdleUI();
-  showToast('נשמר כהקלטה ✓');
 });
 
 document.getElementById('btn-recovery-discard').addEventListener('click', () => {
