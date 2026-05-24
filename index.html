@@ -572,6 +572,7 @@ let silenceBarInterval = null;
 let autoResumeInterval = null;
 let restartScheduled = false;
 let currentSessionId = 0;
+let finalResultsCount = 0;
 
 const transcriptEl = document.getElementById('transcript-edit');
 const interimEl    = document.getElementById('interim-display');
@@ -614,6 +615,7 @@ function showIdleUI() {
 function initRecognition() {
   if (!SR) { showToast('הדפדפן לא תומך בזיהוי דיבור'); return false; }
   const sessionId = ++currentSessionId;
+  finalResultsCount = 0;
   recognition = new SR();
   recognition.lang = 'he-IL';
   recognition.continuous = true;
@@ -625,10 +627,16 @@ function initRecognition() {
     resetSilenceTimer();
     let interim = '';
     let newFinal = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
+    // Use finalResultsCount instead of e.resultIndex — Chrome Android can
+    // reset e.resultIndex to 0 mid-session, causing massive duplication
+    for (let i = finalResultsCount; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) { newFinal += t + ' '; }
-      else { interim += t; }
+      if (e.results[i].isFinal) {
+        newFinal += t + ' ';
+        finalResultsCount = i + 1;
+      } else {
+        interim += t;
+      }
     }
     if (newFinal) {
       finalText += newFinal;
