@@ -3,6 +3,8 @@ import {
   saveDraft, loadDraft, clearDraft, formatDate
 } from './storage.js';
 
+import { diagLog, copyDiagLog } from './diagnostics.js';
+
 import {
   state as rec, handlers as recHandlers,
   startRecognition, stopRecognition, pauseRecognition, resumeRecognition,
@@ -47,13 +49,16 @@ async function acquireWakeLock() {
   if (!('wakeLock' in navigator)) return;
   try {
     wakeLock = await navigator.wakeLock.request('screen');
+    diagLog('wake_lock_acquired');
     wakeLock.addEventListener('release', () => {
+      diagLog('wake_lock_released');
       if (rec.isRecording && !rec.isPaused && document.visibilityState === 'visible') {
         acquireWakeLock();
       }
     });
   } catch (e) {
     console.warn('[wakeLock] acquire failed:', e.name, e.message);
+    diagLog('wake_lock_failed', { name: e.name, msg: e.message });
   }
 }
 
@@ -128,6 +133,7 @@ async function continueRecording() {
 }
 
 async function beginRecording(existingText) {
+  diagLog('record_start', { existingLen: existingText.trim().length });
   els.btnStart.style.display = 'none';
   els.btnContinue.style.display = 'none';
   await ensureAudioCtx();
@@ -144,6 +150,7 @@ async function pause() {
   if (!rec.isRecording) return;
   await ensureAudioCtx();
   if (!rec.isPaused) {
+    diagLog('record_pause');
     pauseRecognition();
     beepPause();
     showPausedUI();
@@ -151,6 +158,7 @@ async function pause() {
     stopSilenceBar();
     releaseWakeLock();
   } else {
+    diagLog('record_resume');
     resumeRecognition();
     beepResume();
     showRecordingUI();
@@ -161,6 +169,7 @@ async function pause() {
 }
 
 async function stopAndSave(autoStop = false) {
+  diagLog('record_stop', { autoStop, textLen: els.transcript.value.trim().length });
   stopRecognition();
   await ensureAudioCtx();
   beepStop();
@@ -321,6 +330,12 @@ function _download(blob, name) {
 }
 
 function dateStamp() { return new Date().toISOString().slice(0, 10); }
+
+document.getElementById('btn-copy-diag').addEventListener('click', () => {
+  copyDiagLog()
+    .then(() => showToast('לוג אבחון הועתק ✓'))
+    .catch(() => showToast('לא ניתן להעתיק — בדוק הרשאות'));
+});
 
 document.getElementById('btn-export-json').addEventListener('click', async () => {
   const sessions = await loadSessions();

@@ -1,3 +1,5 @@
+import { diagLog } from './diagnostics.js';
+
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const MAX_CONSECUTIVE_ERRORS = 5;
 
@@ -50,6 +52,7 @@ function _init() {
   const id = ++_sessionId;
   _finalCount = 0;
   _atSessionStart = true; // Chrome Android may replay prev-session text in first onresult
+  diagLog('session_start', { id });
   _rec = new SR();
   _rec.lang = 'he-IL';
   _rec.continuous = false;
@@ -79,12 +82,19 @@ function _init() {
         : state.finalText + newFinal;
       state.sessionFinalText += newFinal;
     }
+    diagLog('result', {
+      id,
+      final: newFinal.trim().slice(0, 60) || undefined,
+      interim: interim.slice(0, 30) || undefined,
+      firstResult: isFirstResult || undefined,
+    });
     handlers.onResult?.(state.finalText, state.sessionFinalText, interim);
   };
 
   _rec.onerror = (e) => {
     if (_sessionId !== id) return;
     console.log('[recognition] error:', e.error, '(session', id, ')');
+    diagLog('error', { id, error: e.error });
     if (e.error === 'no-speech') return;
 
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
@@ -112,6 +122,7 @@ function _init() {
 
   _rec.onend = () => {
     if (_sessionId !== id) return;
+    diagLog('session_end', { id });
     if (state.isRecording && !state.isPaused && !_restartPending) {
       _restartPending = true;
       setTimeout(() => {
@@ -133,6 +144,7 @@ function _kill() {
 }
 
 function _restart() {
+  diagLog('restart');
   if (!_init()) return;
   try {
     _rec.start();

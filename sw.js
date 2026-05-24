@@ -1,7 +1,8 @@
-const CACHE = 'nesiya-v3';
+const CACHE = 'nesiya-v4';
 const ASSETS = [
   './', './index.html', './manifest.json', './icon.svg',
-  './js/app.js', './js/storage.js', './js/recognition.js', './js/ui.js'
+  './js/app.js', './js/storage.js', './js/recognition.js',
+  './js/ui.js', './js/diagnostics.js'
 ];
 
 self.addEventListener('install', e => {
