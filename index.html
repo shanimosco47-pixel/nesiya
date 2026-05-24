@@ -585,7 +585,23 @@ let recognition = null;
 let isRecording = false;
 let isPaused = false;
 let finalText = '';
-let sessionFinalText = ''; // text accumulated in current recognition session only
+let sessionFinalText = '';
+let wakeLock = null;
+
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => {
+      // Re-acquire automatically if still recording (e.g. after tab regains focus)
+      if (isRecording && !isPaused) acquireWakeLock();
+    });
+  } catch(e) {}
+}
+
+function releaseWakeLock() {
+  if (wakeLock) { wakeLock.release(); wakeLock = null; }
+}
 let silenceTimer = null;
 let silenceBarTimer = null;
 const SILENCE_DURATION = 5 * 60 * 1000; // 5 minutes
@@ -723,6 +739,7 @@ function startRecording() {
   resetSilenceTimer();
   btnGdocs.disabled = false;
   startSilenceBar();
+  acquireWakeLock();
 }
 
 function pauseRecording() {
@@ -734,6 +751,7 @@ function pauseRecording() {
     showPausedUI();
     stopSilenceTimer();
     stopSilenceBar();
+    releaseWakeLock();
   } else {
     isPaused = false;
     restartRecognition();
@@ -741,6 +759,7 @@ function pauseRecording() {
     showRecordingUI();
     resetSilenceTimer();
     startSilenceBar();
+    acquireWakeLock();
   }
 }
 
@@ -750,6 +769,7 @@ function stopRecording(autoStop = false) {
   restartScheduled = false;
   try { recognition.stop(); recognition = null; } catch(e) {}
   beepStop();
+  releaseWakeLock();
   showIdleUI();
   stopSilenceTimer();
   if (autoStop) showToast('הפסקת דיבור - ההקלטה נעצרה');
