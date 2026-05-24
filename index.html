@@ -11,7 +11,6 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="נסיעה">
   <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-  <script src="https://accounts.google.com/gsi/client" async onload="initGoogleAuth()"></script>
   <style>
     :root {
       --bg: #0a0a0f;
@@ -942,11 +941,11 @@ function openInGoogleDocs() {
     else { pendingDocsText = text; tokenClient.requestAccessToken(); }
     return;
   }
-  // Fallback: copy to clipboard + open Google Docs
-  navigator.clipboard.writeText(`${formatDate(new Date())}\n\n${text}`).then(() => {
-    showToast('הטקסט הועתק - פותח Google Docs...');
-    setTimeout(() => window.open('https://docs.google.com/document/create', '_blank'), 800);
-  }).catch(() => window.open('https://docs.google.com/document/create', '_blank'));
+  // Fallback: open Docs immediately (user gesture still active), then copy text to clipboard
+  window.open('https://docs.google.com/document/create', '_blank');
+  navigator.clipboard.writeText(`${formatDate(new Date())}\n\n${text}`)
+    .then(() => showToast('הטקסט הועתק — פסט ב-Google Docs'))
+    .catch(() => showToast('פותח Google Docs...'));
 }
 
 // ─── SEARCH ──────────────────────────────────────────────────────────────────
@@ -1129,5 +1128,6 @@ if ('serviceWorker' in navigator) {
   }
 })();
 </script>
+<script src="https://accounts.google.com/gsi/client" async onload="initGoogleAuth()"></script>
 </body>
 </html>
