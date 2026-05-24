@@ -29,6 +29,7 @@
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    button, .icon-btn, .session-btn, .close-btn { touch-action: manipulation; }
 
     body {
       font-family: 'Heebo', sans-serif;
@@ -762,8 +763,11 @@ function startNewRecording() {
 }
 
 async function startRecording() {
+  // Hide buttons immediately — prevents double-tap during the async ctx.resume() wait
+  btnStart.style.display = 'none';
+  btnContinue.style.display = 'none';
   await ensureAudioCtx();
-  if (!initRecognition()) return;
+  if (!initRecognition()) { showIdleUI(); return; }
   finalText = transcriptEl.value;
   sessionFinalText = '';
   isRecording = true;
