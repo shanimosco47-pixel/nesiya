@@ -570,6 +570,7 @@ let silenceStart = null;
 let silenceBarInterval = null;
 let autoResumeInterval = null;
 let restartScheduled = false;
+let currentSessionId = 0;
 
 const transcriptEl = document.getElementById('transcript-edit');
 const interimEl    = document.getElementById('interim-display');
@@ -611,6 +612,7 @@ function showIdleUI() {
 
 function initRecognition() {
   if (!SR) { showToast('הדפדפן לא תומך בזיהוי דיבור'); return false; }
+  const sessionId = ++currentSessionId;
   recognition = new SR();
   recognition.lang = 'he-IL';
   recognition.continuous = true;
@@ -618,6 +620,7 @@ function initRecognition() {
   recognition.maxAlternatives = 1;
 
   recognition.onresult = (e) => {
+    if (currentSessionId !== sessionId) return; // stale session, ignore
     resetSilenceTimer();
     let interim = '';
     let newFinal = '';
@@ -630,20 +633,20 @@ function initRecognition() {
       finalText += newFinal;
       sessionFinalText += newFinal;
     }
-    // Show final + interim together so text is never seen "disappearing"
     transcriptEl.value = finalText + interim;
     transcriptEl.scrollTop = transcriptEl.scrollHeight;
   };
 
   recognition.onerror = (e) => {
+    if (currentSessionId !== sessionId) return;
     if (e.error === 'no-speech') return;
     if (e.error === 'network') showToast('שגיאת רשת - ממשיך...');
-    // onend always fires after onerror and handles the restart
   };
 
   recognition.onend = () => {
-    // Restore only confirmed text (drop any unfinished interim)
-    transcriptEl.value = finalText;
+    if (currentSessionId !== sessionId) return;
+    // Don't reset textarea — keep showing last state (including any interim)
+    // so text doesn't visually disappear when recognition briefly stops
     if (!isPaused && isRecording && !restartScheduled) {
       restartScheduled = true;
       setTimeout(() => {
@@ -756,12 +759,11 @@ function stopSilenceBar() {
 // ─── AUTO-RESUME AFTER CALL ──────────────────────────────────────────────────
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && isRecording && isPaused) {
-    // Was interrupted (e.g. call), auto-resume
+    // Was interrupted (e.g. call), auto-resume — no beep, user didn't ask for this
     setTimeout(() => {
       if (isRecording && isPaused) {
         isPaused = false;
         restartRecognition();
-        beepResume();
         showRecordingUI();
         resetSilenceTimer();
         startSilenceBar();
@@ -770,7 +772,7 @@ document.addEventListener('visibilitychange', () => {
     }, 800);
   }
   if (document.visibilityState === 'hidden' && isRecording && !isPaused) {
-    // Screen locked / call coming - pause gracefully
+    // Screen locked / call coming - pause gracefully, no beep
     isPaused = true;
     try { recognition.stop(); } catch(e) {}
     stopSilenceTimer();
