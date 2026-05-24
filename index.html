@@ -576,6 +576,7 @@ const SILENCE_DURATION = 5 * 60 * 1000; // 5 minutes
 let silenceStart = null;
 let silenceBarInterval = null;
 let autoResumeInterval = null;
+let restartScheduled = false;
 
 const transcriptEl = document.getElementById('transcript-edit');
 const interimEl    = document.getElementById('interim-display');
@@ -642,20 +643,19 @@ function initRecognition() {
   };
 
   recognition.onerror = (e) => {
-    if (e.error === 'no-speech') { return; }
-    if (e.error === 'network') { showToast('שגיאת רשת - ממשיך...'); }
-    if (!isPaused && isRecording) restartRecognition();
+    if (e.error === 'no-speech') return;
+    if (e.error === 'network') showToast('שגיאת רשת - ממשיך...');
+    // onend always fires after onerror and handles the restart
   };
 
   recognition.onend = () => {
     interimEl.textContent = '';
-    if (!isPaused && isRecording) {
+    if (!isPaused && isRecording && !restartScheduled) {
+      restartScheduled = true;
       setTimeout(() => {
-        if (isRecording && !isPaused) {
-          sessionFinalText = ''; // reset session tracker before new start
-          restartRecognition();
-        }
-      }, 300);
+        restartScheduled = false;
+        if (isRecording && !isPaused) restartRecognition();
+      }, 400);
     }
   };
 
@@ -675,6 +675,7 @@ function startRecording() {
   sessionFinalText = '';
   isRecording = true;
   isPaused = false;
+  restartScheduled = false;
   recognition.start();
   beepStart();
   showRecordingUI();
@@ -705,6 +706,7 @@ function pauseRecording() {
 function stopRecording(autoStop = false) {
   isRecording = false;
   isPaused = false;
+  restartScheduled = false;
   try { recognition.stop(); recognition = null; } catch(e) {}
   beepStop();
   showIdleUI();
