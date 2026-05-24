@@ -569,6 +569,7 @@ let recognition = null;
 let isRecording = false;
 let isPaused = false;
 let finalText = '';
+let sessionFinalText = ''; // text accumulated in current recognition session only
 let silenceTimer = null;
 let silenceBarTimer = null;
 const SILENCE_DURATION = 5 * 60 * 1000; // 5 minutes
@@ -633,6 +634,7 @@ function initRecognition() {
     }
     if (newFinal) {
       finalText += newFinal;
+      sessionFinalText += newFinal;
       transcriptEl.value = finalText;
       transcriptEl.scrollTop = transcriptEl.scrollHeight;
     }
@@ -648,7 +650,12 @@ function initRecognition() {
   recognition.onend = () => {
     interimEl.textContent = '';
     if (!isPaused && isRecording) {
-      setTimeout(() => { if (isRecording && !isPaused) restartRecognition(); }, 300);
+      setTimeout(() => {
+        if (isRecording && !isPaused) {
+          sessionFinalText = ''; // reset session tracker before new start
+          restartRecognition();
+        }
+      }, 300);
     }
   };
 
@@ -665,6 +672,7 @@ function startRecording() {
   if (ctx.state === 'suspended') ctx.resume();
   if (!initRecognition()) return;
   finalText = transcriptEl.value;
+  sessionFinalText = '';
   isRecording = true;
   isPaused = false;
   recognition.start();
