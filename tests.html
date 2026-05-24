@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tests — נסיעה</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #0a0a0f; color: #e8e8f0; }
+    h1 { color: #4f8ef7; margin-bottom: 16px; }
+    .section { font-size: 15px; font-weight: bold; color: #4f8ef7; margin: 20px 0 6px; }
+    pre { font-size: 13px; margin: 2px 0; white-space: pre-wrap; }
+    .pass { color: #4ff7a0; }
+    .fail { color: #f74f4f; }
+    #summary { margin-top: 24px; font-size: 16px; font-weight: bold; }
+  </style>
+</head>
+<body>
+<h1>🧪 Tests — נסיעה</h1>
+<div id="output"></div>
+<div id="summary"></div>
+
+<script type="module">
+import { dedupeAppend } from './js/recognition.js';
+import {
+  initStorage, loadSessions, upsertSession, removeSession,
+  saveDraft, loadDraft, clearDraft, StorageError
+} from './js/storage.js';
+
+const out = document.getElementById('output');
+let pass = 0, fail = 0;
+
+function section(title) {
+  const el = document.createElement('div');
+  el.className = 'section';
+  el.textContent = '── ' + title;
+  out.appendChild(el);
+}
+
+function assert(desc, actual, expected) {
+  const ok = actual === expected;
+  const el = document.createElement('pre');
+  if (ok) {
+    el.className = 'pass';
+    el.textContent = `✓ ${desc}`;
+    pass++;
+  } else {
+    el.className = 'fail';
+    el.textContent = `✗ ${desc}\n  expected: ${JSON.stringify(expected)}\n  got:      ${JSON.stringify(actual)}`;
+    fail++;
+  }
+  out.appendChild(el);
+}
+
+function assertTruthy(desc, value) {
+  const el = document.createElement('pre');
+  if (value) {
+    el.className = 'pass';
+    el.textContent = `✓ ${desc}`;
+    pass++;
+  } else {
+    el.className = 'fail';
+    el.textContent = `✗ ${desc}\n  got: ${JSON.stringify(value)}`;
+    fail++;
+  }
+  out.appendChild(el);
+}
+
+// ── dedupeAppend ──────────────────────────────────────────────────────────────
+section('dedupeAppend — basic');
+
+assert('empty addition returns existing unchanged',
+  dedupeAppend('hello world ', ''), 'hello world ');
+
+assert('empty existing returns trimmed addition with trailing space',
+  dedupeAppend('', 'hello world'), 'hello world ');
+
+assert('no overlap: appends with single space separator',
+  dedupeAppend('hello ', 'world').trim(), 'hello world');
+
+assert('no shared words: plain append',
+  dedupeAppend('alpha beta ', 'gamma delta').trim(),
+  'alpha beta gamma delta');
+
+section('dedupeAppend — min-overlap guard (≥3 words required)');
+
+// 1-word overlap must NOT be removed (legitimate repeated name/word)
+assert('1-word overlap preserved — מירב appears twice',
+  dedupeAppend('צריך לדבר עם מירב ', 'מירב צריכה לשלוח את הדוח').trim(),
+  'צריך לדבר עם מירב מירב צריכה לשלוח את הדוח');
+
+// 2-word overlap must NOT be removed
+assert('2-word overlap preserved',
+  dedupeAppend('שלום עולם ', 'עולם טוב').trim(),
+  'שלום עולם עולם טוב');
+
+// 3-word overlap SHOULD be removed (Chrome inter-session replay signal).
+// The last 3 words of existing must equal the first 3 words of addition for
+// the overlap to be detected (boundary match).
+assert('3-word overlap removed (Chrome replay case)',
+  dedupeAppend('שלום עולם טוב ', 'שלום עולם טוב בוקר').trim(),
+  'שלום עולם טוב בוקר');
+
+// 4-word overlap removed
+assert('4-word overlap removed',
+  dedupeAppend('one two three four ', 'two three four five').trim(),
+  'one two three four five');
+
+// Full replay: many-word overlap
+assert('full replay deduped — long Chrome replay',
+  dedupeAppend('שלום עולם מה שלומך ', 'שלום עולם מה שלומך הכל טוב').trim(),
+  'שלום עולם מה שלומך הכל טוב');
+
+// Repeated identical phrase — full overlap → preserve, no duplication
+assert('complete repeat produces no duplication',
+  dedupeAppend('אני הולך הביתה עכשיו ', 'אני הולך הביתה עכשיו').trim(),
+  'אני הולך הביתה עכשיו');
+
+// ── IndexedDB storage ─────────────────────────────────────────────────────────
+section('Storage — IndexedDB');
+
+// Clean up any leftover test data from previous run
+localStorage.removeItem('nesiya_sessions');
+
+await initStorage();
+
+const S1 = { id: 8888001, date: '2026-01-01', timestamp: '2026-01-01T00:00:00Z', text: 'ראשון' };
+const S2 = { id: 8888002, date: '2026-01-02', timestamp: '2026-01-02T00:00:00Z', text: 'שני' };
+
+await upsertSession(S1);
+await upsertSession(S2);
+const after2 = await loadSessions();
+const ids = after2.map(s => s.id);
+assertTruthy('two test sessions are saved', ids.includes(8888001) && ids.includes(8888002));
+
+assertTruthy('loadSessions returns newest first', after2[0].id >= after2[1].id);
+
+await upsertSession({ ...S1, text: 'מעודכן' });
+const afterUpdate = await loadSessions();
+const updated = afterUpdate.find(s => s.id === 8888001);
+assert('upsert updates existing session text', updated?.text, 'מעודכן');
+
+await removeSession(8888001);
+await removeSession(8888002);
+const afterDelete = await loadSessions();
+assertTruthy('removeSession deletes both records',
+  !afterDelete.find(s => s.id === 8888001) && !afterDelete.find(s => s.id === 8888002));
+
+// ── Draft storage ─────────────────────────────────────────────────────────────
+section('Draft storage — basic');
+
+saveDraft({ finalText: 'my draft text', interimText: '' });
+assert('saveDraft round-trip — finalText', loadDraft()?.finalText, 'my draft text');
+assert('saveDraft round-trip — interimText empty', loadDraft()?.interimText, '');
+assert('saveDraft round-trip — legacyCombinedText false', loadDraft()?.legacyCombinedText, false);
+clearDraft();
+assert('clearDraft — loadDraft returns null', loadDraft(), null);
+
+saveDraft({ finalText: 'another draft', interimText: '' });
+saveDraft({ finalText: 'overwritten', interimText: '' });
+assert('second saveDraft overwrites first', loadDraft()?.finalText, 'overwritten');
+clearDraft();
+
+section('Draft storage — finalText / interimText separation');
+
+saveDraft({ finalText: 'שלום עולם', interimText: 'מה קורה', activeSessionId: 42 });
+const dr1 = loadDraft();
+assert('finalText preserved', dr1?.finalText, 'שלום עולם');
+assert('interimText preserved separately', dr1?.interimText, 'מה קורה');
+assert('activeSessionId preserved', dr1?.activeSessionId, 42);
+assertTruthy('savedAt is a number', typeof dr1?.savedAt === 'number');
+assert('legacyCombinedText false for new format', dr1?.legacyCombinedText, false);
+clearDraft();
+
+// Recovery: confirmed-only text — interimText absent from finalText
+saveDraft({ finalText: 'confirmed speech', interimText: 'partial unconfirmed', activeSessionId: null });
+const drRecovery = loadDraft();
+// The two fields must be separate — finalText must NOT contain interimText
+assert('recovery — finalText does not contain interimText automatically',
+  drRecovery?.finalText, 'confirmed speech');
+assert('recovery — interimText available separately',
+  drRecovery?.interimText, 'partial unconfirmed');
+clearDraft();
+
+// Recovery save without opt-in: using only finalText is safe confirmed text
+saveDraft({ finalText: 'confirmed', interimText: 'unconfirmed partial' });
+const drSave = loadDraft();
+// Simulates btn-recovery-save with checkbox unchecked: use finalText only
+const savedTextNoOptIn = drSave.finalText; // checkbox unchecked → finalText only
+assert('recovery save (no opt-in) uses finalText only', savedTextNoOptIn, 'confirmed');
+// Simulates btn-recovery-save with checkbox checked: include interimText
+const savedTextOptIn = (drSave.finalText + ' ' + drSave.interimText).trim();
+assert('recovery save (opt-in) includes interimText', savedTextOptIn, 'confirmed unconfirmed partial');
+clearDraft();
+
+section('Draft storage — backward compatibility');
+
+// Previous format: { text, activeSessionId, includesInterim: false }
+// → confirmed text only, legacyCombinedText: false
+localStorage.setItem('nesiya_draft', JSON.stringify({ text: 'prev confirmed', activeSessionId: 7, includesInterim: false, savedAt: 1000 }));
+const drPrev1 = loadDraft();
+assert('prev format (includesInterim:false) — finalText', drPrev1?.finalText, 'prev confirmed');
+assert('prev format (includesInterim:false) — interimText empty', drPrev1?.interimText, '');
+assert('prev format (includesInterim:false) — legacyCombinedText false', drPrev1?.legacyCombinedText, false);
+assert('prev format (includesInterim:false) — activeSessionId', drPrev1?.activeSessionId, 7);
+clearDraft();
+
+// Previous format: { text, activeSessionId, includesInterim: true }
+// → combined text, legacyCombinedText: true (can't separate confirmed from interim)
+localStorage.setItem('nesiya_draft', JSON.stringify({ text: 'combined text', activeSessionId: null, includesInterim: true, savedAt: 1000 }));
+const drPrev2 = loadDraft();
+assert('prev format (includesInterim:true) — finalText is combined', drPrev2?.finalText, 'combined text');
+assert('prev format (includesInterim:true) — legacyCombinedText true', drPrev2?.legacyCombinedText, true);
+clearDraft();
+
+// Oldest format: plain string
+localStorage.setItem('nesiya_draft', 'old plain string');
+const drPlain = loadDraft();
+assert('plain string compat — finalText', drPlain?.finalText, 'old plain string');
+assert('plain string compat — interimText empty', drPlain?.interimText, '');
+assert('plain string compat — legacyCombinedText true', drPlain?.legacyCombinedText, true);
+assert('plain string compat — activeSessionId null', drPlain?.activeSessionId, null);
+clearDraft();
+
+section('Draft storage — saveDraft returns bool');
+
+const okResult = saveDraft({ finalText: 'test ok', interimText: '' });
+assert('saveDraft returns true on success', okResult, true);
+
+const origDescriptorDraft = Object.getOwnPropertyDescriptor(Storage.prototype, 'setItem');
+Object.defineProperty(Storage.prototype, 'setItem', {
+  value() { throw new DOMException('QuotaExceededError', 'QuotaExceededError'); },
+  writable: true, configurable: true
+});
+const failResult = saveDraft({ finalText: 'fail', interimText: '' });
+Object.defineProperty(Storage.prototype, 'setItem', origDescriptorDraft);
+assert('saveDraft returns false on quota error', failResult, false);
+clearDraft();
+
+// ── localStorage migration ────────────────────────────────────────────────────
+section('localStorage → IndexedDB migration');
+
+const legacySessions = [
+  { id: 7777001, date: '2025-12-01', timestamp: '2025-12-01T00:00:00Z', text: 'legacy one' },
+  { id: 7777002, date: '2025-12-02', timestamp: '2025-12-02T00:00:00Z', text: 'legacy two' }
+];
+localStorage.setItem('nesiya_sessions', JSON.stringify(legacySessions));
+
+// Re-run initStorage to trigger migration
+await initStorage();
+
+const migrated = await loadSessions();
+assertTruthy('both legacy sessions appear after migration',
+  migrated.find(s => s.id === 7777001) && migrated.find(s => s.id === 7777002));
+
+assert('legacy key removed from localStorage after migration',
+  localStorage.getItem('nesiya_sessions'), null);
+
+await removeSession(7777001);
+await removeSession(7777002);
+
+// ── Session continuation (upsert same ID) ─────────────────────────────────────
+section('Session continuation — upsert updates, never duplicates');
+
+const CONT = { id: 5555001, date: '2026-03-01', timestamp: '2026-03-01T00:00:00Z', text: 'הטקסט המקורי' };
+await upsertSession(CONT);
+
+// Simulate "continue recording" by upserting with the same id
+await upsertSession({ ...CONT, text: 'הטקסט המקורי המשך' });
+const contAll = await loadSessions();
+const contMatches = contAll.filter(s => s.id === 5555001);
+assert('no duplicate created by continuation upsert', contMatches.length, 1);
+assert('continuation updates text in place', contMatches[0]?.text, 'הטקסט המקורי המשך');
+
+// Upsert a third time to confirm idempotency
+await upsertSession({ ...CONT, text: 'גרסה שלישית' });
+const contAll2 = await loadSessions();
+assert('third upsert still no duplicate', contAll2.filter(s => s.id === 5555001).length, 1);
+assert('third upsert updates text again', contAll2.find(s => s.id === 5555001)?.text, 'גרסה שלישית');
+
+await removeSession(5555001);
+
+// ── Draft activeSessionId recovery flow ───────────────────────────────────────
+section('Draft recovery — activeSessionId preserved');
+
+// Simulate: user was continuing session 5544001, app crashed, draft was saved
+// with activeSessionId.  On recovery, "שמור כהקלטה" must upsert, not create new.
+const REC_ID = 5544001;
+const recBase = { id: REC_ID, date: '2026-04-01', timestamp: '2026-04-01T00:00:00Z', text: 'טקסט ראשוני' };
+await upsertSession(recBase);
+
+// Draft saved mid-recording: confirmed text + interim, with activeSessionId set
+saveDraft({ finalText: 'טקסט ראשוני עם תוספות', interimText: 'מילים חלקיות', activeSessionId: REC_ID });
+const recDraft = loadDraft();
+assert('recovery draft — activeSessionId round-trips', recDraft?.activeSessionId, REC_ID);
+assert('recovery draft — finalText round-trips', recDraft?.finalText, 'טקסט ראשוני עם תוספות');
+assert('recovery draft — interimText round-trips', recDraft?.interimText, 'מילים חלקיות');
+assert('recovery draft — legacyCombinedText false', recDraft?.legacyCombinedText, false);
+
+// Simulate btn-recovery-save with checkbox unchecked: use finalText only (no interim).
+// Mirrors the _recoveryText() helper in app.js when recoveryInclude.checked = false.
+let recoveryActiveId = recDraft.activeSessionId || null;
+const recSessions = await loadSessions();
+if (recoveryActiveId) {
+  const existing = recSessions.find(s => s.id === recoveryActiveId);
+  if (existing) {
+    existing.text = recDraft.finalText; // finalText only, interim excluded
+    await upsertSession(existing);
+  }
+}
+clearDraft();
+
+const afterRecovery = await loadSessions();
+const recMatches = afterRecovery.filter(s => s.id === REC_ID);
+assert('recovery save — no duplicate created', recMatches.length, 1);
+assert('recovery save — only finalText persisted (interim excluded)', recMatches[0]?.text, 'טקסט ראשוני עם תוספות');
+assert('draft cleared after recovery save', loadDraft(), null);
+
+await removeSession(REC_ID);
+
+// ── Legacy draft opt-in guard ─────────────────────────────────────────────────
+section('Legacy draft recovery — explicit opt-in required');
+
+// Simulate the _guardLegacy logic from app.js without a real DOM.
+// The guard returns false (block action) when legacyCombinedText is true and
+// the checkbox is unchecked, and true (allow action) when checked.
+function simulateGuard(draft, checkboxChecked) {
+  if (!draft.legacyCombinedText) return true;
+  return checkboxChecked;
+}
+
+// Previous format { text, includesInterim: true } → legacyCombinedText: true
+localStorage.setItem('nesiya_draft', JSON.stringify({
+  text: 'combined text with interim', activeSessionId: null, includesInterim: true, savedAt: 1000
+}));
+const legDraft1 = loadDraft();
+assert('prev includesInterim:true — legacyCombinedText', legDraft1?.legacyCombinedText, true);
+assert('guard blocks without opt-in (includesInterim:true)', simulateGuard(legDraft1, false), false);
+assert('guard allows with opt-in (includesInterim:true)', simulateGuard(legDraft1, true), true);
+// With opt-in, full combined text is used
+assert('opt-in text = combined finalText', legDraft1?.finalText, 'combined text with interim');
+clearDraft();
+
+// Plain string legacy draft → legacyCombinedText: true
+localStorage.setItem('nesiya_draft', 'plain string draft');
+const legDraft2 = loadDraft();
+assert('plain string — legacyCombinedText', legDraft2?.legacyCombinedText, true);
+assert('guard blocks without opt-in (plain string)', simulateGuard(legDraft2, false), false);
+assert('guard allows with opt-in (plain string)', simulateGuard(legDraft2, true), true);
+clearDraft();
+
+// Without opt-in, no session must be persisted (guard returns false → caller skips persistCurrentSession)
+const LEGACY_ID = 4433001;
+const legacyBase = { id: LEGACY_ID, date: '2026-05-01', timestamp: '2026-05-01T00:00:00Z', text: 'base' };
+await upsertSession(legacyBase);
+localStorage.setItem('nesiya_draft', 'plain string draft that should not auto-save');
+const legDraftNoOptIn = loadDraft();
+const wouldProceed = simulateGuard(legDraftNoOptIn, false); // checkbox unchecked
+if (!wouldProceed) {
+  // Guard blocked — no upsert performed, session unchanged
+}
+const sessionAfterBlock = (await loadSessions()).find(s => s.id === LEGACY_ID);
+assert('no session update when guard blocks', sessionAfterBlock?.text, 'base');
+
+// With opt-in, upsert is performed
+const wouldProceedOptIn = simulateGuard(legDraftNoOptIn, true);
+if (wouldProceedOptIn) {
+  await upsertSession({ ...legacyBase, text: legDraftNoOptIn.finalText });
+}
+const sessionAfterOptIn = (await loadSessions()).find(s => s.id === LEGACY_ID);
+assert('session updated after opt-in', sessionAfterOptIn?.text, 'plain string draft that should not auto-save');
+clearDraft();
+await removeSession(LEGACY_ID);
+
+// ── Storage failure behaviour ─────────────────────────────────────────────────
+section('Storage error handling');
+
+// StorageError is exported and constructible
+let storageErrorThrown = false;
+try {
+  throw new StorageError('test', null);
+} catch (e) {
+  storageErrorThrown = e instanceof StorageError && e.name === 'StorageError';
+}
+assertTruthy('StorageError is exported and instanceof-checkable', storageErrorThrown);
+
+// ── Migration remains intact after multiple initStorage calls ─────────────────
+section('Migration stability');
+
+// Already migrated above; running initStorage again must not duplicate entries
+const beforeRepeat = (await loadSessions()).length;
+await initStorage(); // second call — _db already open, legacy key already gone
+const afterRepeat = (await loadSessions()).length;
+assert('repeated initStorage does not create duplicates', afterRepeat, beforeRepeat);
+
+// ── Summary ───────────────────────────────────────────────────────────────────
+const summary = document.getElementById('summary');
+summary.textContent = `${pass} passed, ${fail} failed`;
+summary.style.color = fail ? '#f74f4f' : '#4ff7a0';
+</script>
+</body>
+</html>
