@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tests — נסיעה</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #0a0a0f; color: #e8e8f0; }
+    h1 { color: #4f8ef7; margin-bottom: 16px; }
+    .section { font-size: 15px; font-weight: bold; color: #4f8ef7; margin: 20px 0 6px; }
+    pre { font-size: 13px; margin: 2px 0; white-space: pre-wrap; }
+    .pass { color: #4ff7a0; }
+    .fail { color: #f74f4f; }
+    #summary { margin-top: 24px; font-size: 16px; font-weight: bold; }
+  </style>
+</head>
+<body>
+<h1>🧪 Tests — נסיעה</h1>
+<div id="output"></div>
+<div id="summary"></div>
+
+<script type="module">
+import { dedupeAppend } from './js/recognition.js';
+import {
+  initStorage, loadSessions, upsertSession, removeSession,
+  saveDraft, loadDraft, clearDraft
+} from './js/storage.js';
+
+const out = document.getElementById('output');
+let pass = 0, fail = 0;
+
+function section(title) {
+  const el = document.createElement('div');
+  el.className = 'section';
+  el.textContent = '── ' + title;
+  out.appendChild(el);
+}
+
+function assert(desc, actual, expected) {
+  const ok = actual === expected;
+  const el = document.createElement('pre');
+  if (ok) {
+    el.className = 'pass';
+    el.textContent = `✓ ${desc}`;
+    pass++;
+  } else {
+    el.className = 'fail';
+    el.textContent = `✗ ${desc}\n  expected: ${JSON.stringify(expected)}\n  got:      ${JSON.stringify(actual)}`;
+    fail++;
+  }
+  out.appendChild(el);
+}
+
+function assertTruthy(desc, value) {
+  const el = document.createElement('pre');
+  if (value) {
+    el.className = 'pass';
+    el.textContent = `✓ ${desc}`;
+    pass++;
+  } else {
+    el.className = 'fail';
+    el.textContent = `✗ ${desc}\n  got: ${JSON.stringify(value)}`;
+    fail++;
+  }
+  out.appendChild(el);
+}
+
+// ── dedupeAppend ──────────────────────────────────────────────────────────────
+section('dedupeAppend');
+
+assert('empty addition returns existing unchanged',
+  dedupeAppend('hello world ', ''), 'hello world ');
+
+assert('empty existing returns trimmed addition with trailing space',
+  dedupeAppend('', 'hello world'), 'hello world ');
+
+assert('no overlap: appends with single space separator',
+  dedupeAppend('hello ', 'world').trim(), 'hello world');
+
+assert('full repeat: no duplication',
+  dedupeAppend('hello world ', 'hello world').trim(), 'hello world');
+
+assert('single-word suffix/prefix overlap',
+  dedupeAppend('the quick brown ', 'brown fox jumps').trim(),
+  'the quick brown fox jumps');
+
+assert('multi-word overlap',
+  dedupeAppend('one two three ', 'two three four').trim(),
+  'one two three four');
+
+assert('no shared words: plain append',
+  dedupeAppend('alpha beta ', 'gamma delta').trim(),
+  'alpha beta gamma delta');
+
+assert('Hebrew words overlap',
+  dedupeAppend('שלום עולם ', 'עולם טוב').trim(),
+  'שלום עולם טוב');
+
+assert('overlap at end of existing handles punctuation boundary',
+  dedupeAppend('אני הולך ', 'הולך הביתה').trim(),
+  'אני הולך הביתה');
+
+// ── IndexedDB storage ─────────────────────────────────────────────────────────
+section('Storage — IndexedDB');
+
+// Clean up any leftover test data from previous run
+localStorage.removeItem('nesiya_sessions');
+
+await initStorage();
+
+const S1 = { id: 8888001, date: '2026-01-01', timestamp: '2026-01-01T00:00:00Z', text: 'ראשון' };
+const S2 = { id: 8888002, date: '2026-01-02', timestamp: '2026-01-02T00:00:00Z', text: 'שני' };
+
+await upsertSession(S1);
+await upsertSession(S2);
+const after2 = await loadSessions();
+const ids = after2.map(s => s.id);
+assertTruthy('two test sessions are saved', ids.includes(8888001) && ids.includes(8888002));
+
+assertTruthy('loadSessions returns newest first', after2[0].id >= after2[1].id);
+
+await upsertSession({ ...S1, text: 'מעודכן' });
+const afterUpdate = await loadSessions();
+const updated = afterUpdate.find(s => s.id === 8888001);
+assert('upsert updates existing session text', updated?.text, 'מעודכן');
+
+await removeSession(8888001);
+await removeSession(8888002);
+const afterDelete = await loadSessions();
+assertTruthy('removeSession deletes both records',
+  !afterDelete.find(s => s.id === 8888001) && !afterDelete.find(s => s.id === 8888002));
+
+// ── Draft storage ─────────────────────────────────────────────────────────────
+section('Draft storage');
+
+saveDraft('my draft text');
+assert('saveDraft + loadDraft round-trip', loadDraft(), 'my draft text');
+clearDraft();
+assert('clearDraft removes draft', loadDraft(), '');
+
+saveDraft('another draft');
+saveDraft('overwritten');
+assert('second saveDraft overwrites first', loadDraft(), 'overwritten');
+clearDraft();
+
+// ── localStorage migration ────────────────────────────────────────────────────
+section('localStorage → IndexedDB migration');
+
+const legacySessions = [
+  { id: 7777001, date: '2025-12-01', timestamp: '2025-12-01T00:00:00Z', text: 'legacy one' },
+  { id: 7777002, date: '2025-12-02', timestamp: '2025-12-02T00:00:00Z', text: 'legacy two' }
+];
+localStorage.setItem('nesiya_sessions', JSON.stringify(legacySessions));
+
+// Re-run initStorage to trigger migration
+await initStorage();
+
+const migrated = await loadSessions();
+assertTruthy('both legacy sessions appear after migration',
+  migrated.find(s => s.id === 7777001) && migrated.find(s => s.id === 7777002));
+
+assert('legacy key removed from localStorage after migration',
+  localStorage.getItem('nesiya_sessions'), null);
+
+await removeSession(7777001);
+await removeSession(7777002);
+
+// ── Summary ───────────────────────────────────────────────────────────────────
+const summary = document.getElementById('summary');
+summary.textContent = `${pass} passed, ${fail} failed`;
+summary.style.color = fail ? '#f74f4f' : '#4ff7a0';
+</script>
+</body>
+</html>
