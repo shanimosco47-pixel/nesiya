@@ -487,7 +487,7 @@
     <button class="sec-btn" id="btn-stop" style="display:none">⏹ סיים</button>
     <button class="sec-btn gdocs" id="btn-gdocs" disabled>📄 שמור ב-Google Docs</button>
   </div>
-  <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:2px">עודכן 24.05.2026</div>
+  <div id="build-stamp" style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:2px"></div>
 </div>
 
 <!-- SESSIONS PANEL -->
@@ -976,6 +976,18 @@ if (!SR) {
 window.viewSession = viewSession;
 window.loadSession = loadSession;
 window.deleteSession = deleteSession;
+
+// Build stamp — reads Last-Modified header set by GitHub Pages at deploy time
+(function() {
+  const d = new Date(document.lastModified);
+  const el = document.getElementById('build-stamp');
+  if (el && d && !isNaN(d)) {
+    el.textContent = 'עודכן ' +
+      d.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' }) +
+      ' · ' +
+      d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  }
+})();
 </script>
 </body>
 </html>
