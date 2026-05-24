@@ -643,6 +643,8 @@ let autoResumeInterval = null;
 let restartScheduled = false;
 let currentSessionId = 0;
 let finalResultsCount = 0;
+let consecutiveErrors = 0;
+const MAX_CONSECUTIVE_ERRORS = 5;
 
 const transcriptEl = document.getElementById('transcript-edit');
 const interimEl    = document.getElementById('interim-display');
@@ -713,6 +715,7 @@ function initRecognition() {
 
   recognition.onresult = (e) => {
     if (currentSessionId !== sessionId) return;
+    consecutiveErrors = 0; // speech received — reset error streak
     resetSilenceTimer();
     let interim = '';
     let newFinal = '';
@@ -735,8 +738,32 @@ function initRecognition() {
 
   recognition.onerror = (e) => {
     if (currentSessionId !== sessionId) return;
-    if (e.error === 'no-speech') return;
-    if (e.error === 'network') showToast('שגיאת רשת - ממשיך...');
+    console.log('[recognition] error:', e.error, '(session', sessionId, ')');
+    if (e.error === 'no-speech') return; // normal utterance boundary — don't count as an error
+
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+      showToast('הרשאת מיקרופון נדחתה — בדוק הגדרות');
+      isRecording = false;
+      showIdleUI();
+      return;
+    }
+    if (e.error === 'audio-capture') {
+      showToast('מיקרופון לא נמצא');
+      isRecording = false;
+      showIdleUI();
+      return;
+    }
+
+    consecutiveErrors++;
+    if (e.error === 'network') {
+      showToast('שגיאת רשת - ממשיך...');
+    } else {
+      console.warn('[recognition] unhandled error:', e.error, 'streak:', consecutiveErrors);
+    }
+    if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+      showToast('שגיאות חוזרות — הפסקת הקלטה');
+      stopRecording(true);
+    }
   };
 
   recognition.onend = () => {
@@ -778,6 +805,7 @@ async function startRecording() {
   isRecording = true;
   isPaused = false;
   restartScheduled = false;
+  consecutiveErrors = 0;
   recognition.start();
   beepStart();
   showRecordingUI();
