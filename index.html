@@ -415,8 +415,6 @@
       transform: translateX(-50%) translateY(0);
     }
 
-    #toast.show.linkable { pointer-events: auto; cursor: pointer; }
-
     /* ── SESSION VIEWER ── */
     #session-viewer {
       display: none;
@@ -882,96 +880,10 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// ─── GOOGLE DOCS API ─────────────────────────────────────────────────────────
-// Two integration options (set one of the constants below):
-//
-// Option A — Apps Script (simpler, no Cloud Console):
-//   1. Go to script.google.com → New project → paste:
-//        function doPost(e) {
-//          var d = JSON.parse(e.postData.contents);
-//          var doc = DocumentApp.create(d.title);
-//          doc.getBody().setText(d.text);
-//          return ContentService.createTextOutput(doc.getUrl())
-//            .setMimeType(ContentService.MimeType.TEXT);
-//        }
-//   2. Deploy → New deployment → Web App
-//      Execute as: Me | Who has access: Anyone
-//   3. Copy the Web App URL into APPS_SCRIPT_URL below
-//
-// Option B — Google Docs API + OAuth (proper, requires Google Cloud project):
-//   1. console.cloud.google.com → Enable Google Docs API
-//   2. Create OAuth 2.0 Client ID (Web application)
-//   3. Add authorized origin: https://shanimosco47-pixel.github.io
-//   4. Paste Client ID into GOOGLE_CLIENT_ID below
-const APPS_SCRIPT_URL = ''; // Option A
-const GOOGLE_CLIENT_ID  = ''; // Option B
-
-let tokenClient = null;
-let googleToken = null;
-let pendingDocsText = null;
-
-function initGoogleAuth() {
-  if (!GOOGLE_CLIENT_ID) return;
-  tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: GOOGLE_CLIENT_ID,
-    scope: 'https://www.googleapis.com/auth/documents',
-    callback: async (resp) => {
-      if (resp.error) { showToast('שגיאה בהתחברות לגוגל'); return; }
-      googleToken = resp.access_token;
-      if (pendingDocsText) {
-        const text = pendingDocsText;
-        pendingDocsText = null;
-        await createGoogleDoc(text);
-      }
-    }
-  });
-}
-
-async function createGoogleDoc(text) {
-  const title = `נסיעה ${formatDate(new Date())}`;
-  showToast('יוצר מסמך...');
-  try {
-    const createRes = await fetch('https://docs.googleapis.com/v1/documents', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${googleToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title })
-    });
-    if (createRes.status === 401) {
-      googleToken = null;
-      pendingDocsText = text;
-      tokenClient.requestAccessToken();
-      return;
-    }
-    if (!createRes.ok) throw new Error('create');
-    const { documentId } = await createRes.json();
-    const updateRes = await fetch(`https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${googleToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requests: [{ insertText: { location: { index: 1 }, text } }] })
-    });
-    if (!updateRes.ok) throw new Error('insert');
-    showToastWithLink('נשמר ב-Google Docs ✓',
-      `https://docs.google.com/document/d/${documentId}/edit`);
-  } catch(e) {
-    showToast('שגיאה בשמירה ב-Google Docs');
-  }
-}
-
-async function saveViaAppsScript(text) {
-  const title = `נסיעה ${formatDate(new Date())}`;
-  showToast('יוצר מסמך...');
-  const res = await fetch(APPS_SCRIPT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify({ title, text })
-  });
-  if (!res.ok) throw new Error('script');
-  const docUrl = (await res.text()).trim();
-  showToastWithLink('נשמר ב-Google Docs ✓', docUrl);
-}
-
-function openDocsNewTab() {
-  // anchor click is more reliable than window.open in PWA standalone mode
+// ─── GOOGLE DOCS ─────────────────────────────────────────────────────────────
+function openInGoogleDocs() {
+  const text = transcriptEl.value.trim();
+  if (!text) { showToast('אין טקסט לשמירה'); return; }
   const a = Object.assign(document.createElement('a'), {
     href: 'https://docs.google.com/document/create',
     target: '_blank',
@@ -980,30 +892,6 @@ function openDocsNewTab() {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-}
-
-function openInGoogleDocs() {
-  const text = transcriptEl.value.trim();
-  if (!text) { showToast('אין טקסט לשמירה'); return; }
-
-  // Option B: OAuth + Docs API
-  if (tokenClient) {
-    if (googleToken) { createGoogleDoc(text); }
-    else { pendingDocsText = text; tokenClient.requestAccessToken(); }
-    return;
-  }
-
-  // Option A: Apps Script webhook
-  if (APPS_SCRIPT_URL) {
-    saveViaAppsScript(text).catch(() => {
-      showToast('שגיאה — פותח Google Docs...');
-      openDocsNewTab();
-    });
-    return;
-  }
-
-  // Fallback: open Docs + copy to clipboard
-  openDocsNewTab();
   navigator.clipboard.writeText(`${formatDate(new Date())}\n\n${text}`)
     .then(() => showToast('הטקסט הועתק — פסט ב-Google Docs'))
     .catch(() => {});
@@ -1126,30 +1014,13 @@ document.getElementById('btn-viewer-continue').addEventListener('click', () => {
 
 // ─── TOAST ───────────────────────────────────────────────────────────────────
 let toastTimer;
-let toastLinkUrl = null;
-
 function showToast(msg) {
   const t = document.getElementById('toast');
-  toastLinkUrl = null;
   t.textContent = msg;
-  t.classList.remove('linkable');
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
 }
-
-function showToastWithLink(msg, url) {
-  const t = document.getElementById('toast');
-  toastLinkUrl = url;
-  t.textContent = msg + ' — לחץ לפתיחה';
-  t.classList.add('show', 'linkable');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.classList.remove('show', 'linkable'); toastLinkUrl = null; }, 7000);
-}
-
-document.getElementById('toast').addEventListener('click', () => {
-  if (toastLinkUrl) window.open(toastLinkUrl, '_blank');
-});
 
 // ─── BUTTON WIRING ───────────────────────────────────────────────────────────
 btnStart.addEventListener('click', startNewRecording);
@@ -1189,6 +1060,5 @@ if ('serviceWorker' in navigator) {
   }
 })();
 </script>
-<script src="https://accounts.google.com/gsi/client" async onload="initGoogleAuth()"></script>
 </body>
 </html>
