@@ -123,6 +123,8 @@
     .icon-btn:active { transform: scale(0.93); }
     .icon-btn.active { border-color: var(--accent); color: var(--accent); }
 
+    #btn-history { width: 52px; height: 52px; font-size: 24px; }
+
     /* ── SEARCH BAR ── */
     #search-bar {
       display: none;
@@ -286,8 +288,9 @@
       transition: all 0.2s;
     }
 
-    .session-btn.danger { color: var(--red); border-color: var(--red); }
-    .session-btn.primary { color: var(--accent); border-color: var(--accent); }
+    .session-btn.danger { color: var(--red); border-color: var(--red); background: rgba(247,79,79,0.08); }
+    .session-btn.primary { color: var(--accent); border-color: var(--accent); background: rgba(79,142,247,0.08); }
+    .session-btn.success { color: var(--green); border-color: var(--green); background: rgba(79,247,160,0.08); }
 
     .empty-state {
       text-align: center;
@@ -445,6 +448,19 @@
       flex-shrink: 0;
     }
 
+    /* ── UPDATE BANNER ── */
+    #update-banner {
+      display: none;
+      background: var(--accent);
+      color: #fff;
+      text-align: center;
+      padding: 9px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
     /* Scrollbar */
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -465,6 +481,9 @@
     <div class="icon-btn" id="btn-history" title="היסטוריה">📋</div>
   </div>
 </header>
+
+<!-- UPDATE BANNER -->
+<div id="update-banner" onclick="location.reload()">🔄 גרסה חדשה זמינה — לחץ לרענון</div>
 
 <!-- SEARCH BAR -->
 <div id="search-bar">
@@ -926,7 +945,7 @@ function renderSessions() {
       <div class="session-preview">${s.text}</div>
       <div class="session-actions">
         <button class="session-btn primary" onclick="viewSession(${s.id})">צפה</button>
-        <button class="session-btn primary" onclick="loadSession(${s.id})">טען לעריכה</button>
+        <button class="session-btn success" onclick="loadSession(${s.id})">טען לעריכה</button>
         <button class="session-btn danger" onclick="deleteSession(${s.id})">מחק</button>
       </div>
     </div>
@@ -1016,7 +1035,11 @@ window.loadSession = loadSession;
 window.deleteSession = deleteSession;
 
 if ('serviceWorker' in navigator) {
+  const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('./sw.js');
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController) document.getElementById('update-banner').style.display = 'block';
+  });
 }
 
 // Build stamp — reads Last-Modified header set by GitHub Pages at deploy time
