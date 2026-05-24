@@ -759,12 +759,11 @@ function stopSilenceBar() {
 // ─── AUTO-RESUME AFTER CALL ──────────────────────────────────────────────────
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && isRecording && isPaused) {
-    // Was interrupted (e.g. call), auto-resume
+    // Was interrupted (e.g. call), auto-resume — no beep, user didn't ask for this
     setTimeout(() => {
       if (isRecording && isPaused) {
         isPaused = false;
         restartRecognition();
-        beepResume();
         showRecordingUI();
         resetSilenceTimer();
         startSilenceBar();
@@ -773,7 +772,7 @@ document.addEventListener('visibilitychange', () => {
     }, 800);
   }
   if (document.visibilityState === 'hidden' && isRecording && !isPaused) {
-    // Screen locked / call coming - pause gracefully
+    // Screen locked / call coming - pause gracefully, no beep
     isPaused = true;
     try { recognition.stop(); } catch(e) {}
     stopSilenceTimer();
