@@ -222,7 +222,16 @@ recHandlers.onResetSilence = resetSilenceTimer;
 
 recHandlers.onError = (msg) => showToast(msg);
 
-recHandlers.onForceStopped = () => stopAndSave(false);
+// Fatal abort (mic denied, audio-capture): reset UI and resources but do NOT
+// beep or persist — the error toast from onError is the only user feedback needed.
+// Draft is kept intentionally so the user can recover any text entered before
+// the mic was denied.
+recHandlers.onFatalAbort = () => {
+  releaseWakeLock();
+  clearSilenceTimer();
+  stopSilenceBar();
+  showIdleUI();
+};
 
 // ─── VISIBILITY CHANGE ────────────────────────────────────────────────────────
 document.addEventListener('visibilitychange', () => {

@@ -12,10 +12,10 @@ export const state = {
 
 // Callbacks wired by app.js
 export const handlers = {
-  onResult: null,       // (finalText, sessionFinalText, interim) => void
+  onResult: null,      // (finalText, sessionFinalText, interim) => void
   onResetSilence: null, // () => void
   onError: null,        // (msg) => void
-  onForceStopped: null, // () => void — called when recognition stops itself (fatal error)
+  onFatalAbort: null,  // () => void — called on fatal error (mic denied, audio-capture); no beep/save
 };
 
 let _rec = null;
@@ -140,7 +140,7 @@ function _kill() {
   state.isPaused = false;
   _restartPending = false;
   try { _rec?.stop(); _rec = null; } catch {}
-  handlers.onForceStopped?.();
+  handlers.onFatalAbort?.();
 }
 
 function _restart() {
