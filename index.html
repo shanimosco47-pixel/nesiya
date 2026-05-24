@@ -620,10 +620,15 @@ async function acquireWakeLock() {
   try {
     wakeLock = await navigator.wakeLock.request('screen');
     wakeLock.addEventListener('release', () => {
-      // Re-acquire automatically if still recording (e.g. after tab regains focus)
-      if (isRecording && !isPaused) acquireWakeLock();
+      // Only re-acquire when the page is actually visible; if the screen is off
+      // or the app is backgrounded the re-request would fail or be pointless.
+      if (isRecording && !isPaused && document.visibilityState === 'visible') {
+        acquireWakeLock();
+      }
     });
-  } catch(e) {}
+  } catch(e) {
+    console.warn('[wakeLock] acquire failed:', e.name, e.message);
+  }
 }
 
 function releaseWakeLock() {
@@ -876,11 +881,12 @@ document.addEventListener('visibilitychange', () => {
     }, 800);
   }
   if (document.visibilityState === 'hidden' && isRecording && !isPaused) {
-    // Screen locked / call coming - pause gracefully, no beep
+    // Screen locked / call coming — pause gracefully, no beep
     isPaused = true;
     try { recognition.stop(); } catch(e) {}
     stopSilenceTimer();
     stopSilenceBar();
+    releaseWakeLock(); // no point keeping screen lock while app is backgrounded
   }
 });
 
