@@ -945,21 +945,48 @@ closeViewer.addEventListener('click', () => sessionViewer.classList.remove('open
 
 function renderSessions() {
   const sessions = loadSessions();
+  sessionsList.textContent = '';
   if (!sessions.length) {
-    sessionsList.innerHTML = '<div class="empty-state">אין הקלטות שמורות עדיין</div>';
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = 'אין הקלטות שמורות עדיין';
+    sessionsList.appendChild(empty);
     return;
   }
-  sessionsList.innerHTML = sessions.map(s => `
-    <div class="session-card">
-      <div class="session-date">${s.date}</div>
-      <div class="session-preview">${s.text}</div>
-      <div class="session-actions">
-        <button class="session-btn primary" onclick="viewSession(${s.id})">צפה</button>
-        <button class="session-btn success" onclick="loadSession(${s.id})">טען לעריכה</button>
-        <button class="session-btn danger" onclick="deleteSession(${s.id})">מחק</button>
-      </div>
-    </div>
-  `).join('');
+  for (const s of sessions) {
+    const card = document.createElement('div');
+    card.className = 'session-card';
+
+    const date = document.createElement('div');
+    date.className = 'session-date';
+    date.textContent = s.date;
+
+    const preview = document.createElement('div');
+    preview.className = 'session-preview';
+    preview.textContent = s.text.slice(0, 200);
+
+    const actions = document.createElement('div');
+    actions.className = 'session-actions';
+
+    const btnView = document.createElement('button');
+    btnView.className = 'session-btn primary';
+    btnView.textContent = 'צפה';
+    btnView.addEventListener('click', () => viewSession(s.id));
+
+    const btnLoad = document.createElement('button');
+    btnLoad.className = 'session-btn success';
+    btnLoad.textContent = 'טען לעריכה';
+    btnLoad.addEventListener('click', () => loadSession(s.id));
+
+    const btnDel = document.createElement('button');
+    btnDel.className = 'session-btn danger';
+    btnDel.textContent = 'מחק';
+    btnDel.addEventListener('click', () => deleteSession(s.id));
+
+    actions.append(btnView, btnLoad, btnDel);
+    card.append(date, preview, actions);
+    sessionsList.appendChild(card);
+  }
 }
 
 let viewingSessionId = null;
