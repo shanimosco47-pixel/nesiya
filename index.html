@@ -11,6 +11,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="נסיעה">
   <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+  <script src="https://accounts.google.com/gsi/client" async onload="initGoogleAuth()"></script>
   <style>
     :root {
       --bg: #0a0a0f;
@@ -414,6 +415,8 @@
       opacity: 1;
       transform: translateX(-50%) translateY(0);
     }
+
+    #toast.show.linkable { pointer-events: auto; cursor: pointer; }
 
     /* ── SESSION VIEWER ── */
     #session-viewer {
@@ -872,23 +875,78 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// ─── GOOGLE DOCS ─────────────────────────────────────────────────────────────
+// ─── GOOGLE DOCS API ─────────────────────────────────────────────────────────
+// To enable direct Google Docs saving:
+//   1. Create an OAuth 2.0 Client ID at console.cloud.google.com
+//   2. Enable the Google Docs API for your project
+//   3. Add your GitHub Pages origin to "Authorized JavaScript origins"
+//   4. Paste the Client ID below
+const GOOGLE_CLIENT_ID = '';
+
+let tokenClient = null;
+let googleToken = null;
+let pendingDocsText = null;
+
+function initGoogleAuth() {
+  if (!GOOGLE_CLIENT_ID) return;
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: 'https://www.googleapis.com/auth/documents',
+    callback: async (resp) => {
+      if (resp.error) { showToast('שגיאה בהתחברות לגוגל'); return; }
+      googleToken = resp.access_token;
+      if (pendingDocsText) {
+        const text = pendingDocsText;
+        pendingDocsText = null;
+        await createGoogleDoc(text);
+      }
+    }
+  });
+}
+
+async function createGoogleDoc(text) {
+  const title = `נסיעה ${formatDate(new Date())}`;
+  showToast('יוצר מסמך...');
+  try {
+    const createRes = await fetch('https://docs.googleapis.com/v1/documents', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${googleToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title })
+    });
+    if (createRes.status === 401) {
+      googleToken = null;
+      pendingDocsText = text;
+      tokenClient.requestAccessToken();
+      return;
+    }
+    if (!createRes.ok) throw new Error('create');
+    const { documentId } = await createRes.json();
+    const updateRes = await fetch(`https://docs.googleapis.com/v1/documents/${documentId}:batchUpdate`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${googleToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requests: [{ insertText: { location: { index: 1 }, text } }] })
+    });
+    if (!updateRes.ok) throw new Error('insert');
+    showToastWithLink('נשמר ב-Google Docs ✓',
+      `https://docs.google.com/document/d/${documentId}/edit`);
+  } catch(e) {
+    showToast('שגיאה בשמירה ב-Google Docs');
+  }
+}
+
 function openInGoogleDocs() {
   const text = transcriptEl.value.trim();
   if (!text) { showToast('אין טקסט לשמירה'); return; }
-  const now = new Date();
-  const title = `נסיעה ${formatDate(now)}`;
-  const encoded = encodeURIComponent(text);
-  // Opens a pre-filled Google Docs document
-  const url = `https://docs.google.com/document/create?title=${encodeURIComponent(title)}&body=${encoded}`;
+  if (tokenClient) {
+    if (googleToken) { createGoogleDoc(text); }
+    else { pendingDocsText = text; tokenClient.requestAccessToken(); }
+    return;
+  }
   // Fallback: copy to clipboard + open Google Docs
-  navigator.clipboard.writeText(`${title}\n\n${text}`).then(() => {
+  navigator.clipboard.writeText(`${formatDate(new Date())}\n\n${text}`).then(() => {
     showToast('הטקסט הועתק - פותח Google Docs...');
     setTimeout(() => window.open('https://docs.google.com/document/create', '_blank'), 800);
-  }).catch(() => {
-    showToast('פותח Google Docs...');
-    window.open('https://docs.google.com/document/create', '_blank');
-  });
+  }).catch(() => window.open('https://docs.google.com/document/create', '_blank'));
 }
 
 // ─── SEARCH ──────────────────────────────────────────────────────────────────
@@ -1008,13 +1066,30 @@ document.getElementById('btn-viewer-continue').addEventListener('click', () => {
 
 // ─── TOAST ───────────────────────────────────────────────────────────────────
 let toastTimer;
+let toastLinkUrl = null;
+
 function showToast(msg) {
   const t = document.getElementById('toast');
+  toastLinkUrl = null;
   t.textContent = msg;
+  t.classList.remove('linkable');
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
 }
+
+function showToastWithLink(msg, url) {
+  const t = document.getElementById('toast');
+  toastLinkUrl = url;
+  t.textContent = msg + ' — לחץ לפתיחה';
+  t.classList.add('show', 'linkable');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.classList.remove('show', 'linkable'); toastLinkUrl = null; }, 7000);
+}
+
+document.getElementById('toast').addEventListener('click', () => {
+  if (toastLinkUrl) window.open(toastLinkUrl, '_blank');
+});
 
 // ─── BUTTON WIRING ───────────────────────────────────────────────────────────
 btnStart.addEventListener('click', startNewRecording);
