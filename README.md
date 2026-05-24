@@ -35,6 +35,8 @@ Before merging or after changes to `js/recognition.js` or `js/app.js`:
 - [ ] **Storage full** — simulate quota error (DevTools → Application → Storage → set quota to
   1 MB) → error toast shown, draft NOT cleared.
 - [ ] **No microphone** — deny mic permission → Hebrew toast shown, app returns to idle.
+- [ ] **Mic denied with content** — load a session ("טען לעריכה"), deny mic permission → no beep,
+  no new session created, app returns to idle with existing text intact.
 - [ ] **Network error** — airplane mode during recording → "שגיאת רשת..." toast; recording
   continues when back online.
 - [ ] **tests.html** — open `/tests.html` in Chrome; all tests pass green.

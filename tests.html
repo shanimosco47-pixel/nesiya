@@ -144,16 +144,47 @@ assertTruthy('removeSession deletes both records',
   !afterDelete.find(s => s.id === 8888001) && !afterDelete.find(s => s.id === 8888002));
 
 // ── Draft storage ─────────────────────────────────────────────────────────────
-section('Draft storage');
+section('Draft storage — basic');
 
 saveDraft('my draft text');
-assert('saveDraft + loadDraft round-trip', loadDraft(), 'my draft text');
+assert('saveDraft (string) round-trip — text', loadDraft()?.text, 'my draft text');
 clearDraft();
-assert('clearDraft removes draft', loadDraft(), '');
+assert('clearDraft — loadDraft returns null', loadDraft(), null);
 
 saveDraft('another draft');
 saveDraft('overwritten');
-assert('second saveDraft overwrites first', loadDraft(), 'overwritten');
+assert('second saveDraft overwrites first', loadDraft()?.text, 'overwritten');
+clearDraft();
+
+section('Draft storage — object API');
+
+saveDraft({ text: 'שלום עולם', activeSessionId: 42 });
+const dr1 = loadDraft();
+assert('draft object — text preserved', dr1?.text, 'שלום עולם');
+assert('draft object — activeSessionId preserved', dr1?.activeSessionId, 42);
+assertTruthy('draft object — savedAt is a number', typeof dr1?.savedAt === 'number');
+clearDraft();
+
+// Backward compat: plain string written by old app version
+localStorage.setItem('nesiya_draft', 'old plain string');
+const dr2 = loadDraft();
+assert('backward compat — text from plain string', dr2?.text, 'old plain string');
+assert('backward compat — activeSessionId null', dr2?.activeSessionId, null);
+clearDraft();
+
+section('Draft storage — saveDraft returns bool');
+
+const okResult = saveDraft('test ok');
+assert('saveDraft returns true on success', okResult, true);
+
+const origDescriptorDraft = Object.getOwnPropertyDescriptor(Storage.prototype, 'setItem');
+Object.defineProperty(Storage.prototype, 'setItem', {
+  value() { throw new DOMException('QuotaExceededError', 'QuotaExceededError'); },
+  writable: true, configurable: true
+});
+const failResult = saveDraft('fail');
+Object.defineProperty(Storage.prototype, 'setItem', origDescriptorDraft);
+assert('saveDraft returns false on quota error', failResult, false);
 clearDraft();
 
 // ── localStorage migration ────────────────────────────────────────────────────
@@ -199,24 +230,47 @@ assert('third upsert updates text again', contAll2.find(s => s.id === 5555001)?.
 
 await removeSession(5555001);
 
+// ── Draft activeSessionId recovery flow ───────────────────────────────────────
+section('Draft recovery — activeSessionId preserved');
+
+// Simulate: user was continuing session 5544001, app crashed, draft was saved
+// with activeSessionId.  On recovery, "שמור כהקלטה" must upsert, not create new.
+const REC_ID = 5544001;
+const recBase = { id: REC_ID, date: '2026-04-01', timestamp: '2026-04-01T00:00:00Z', text: 'טקסט ראשוני' };
+await upsertSession(recBase);
+
+// Draft saved mid-recording with activeSessionId set
+saveDraft({ text: 'טקסט ראשוני עם תוספות', activeSessionId: REC_ID });
+const recDraft = loadDraft();
+assert('recovery draft — activeSessionId round-trips', recDraft?.activeSessionId, REC_ID);
+assert('recovery draft — text round-trips', recDraft?.text, 'טקסט ראשוני עם תוספות');
+
+// Simulate btn-recovery-save: restore activeSessionId then upsert
+// (mirrors the app.js handler exactly)
+let recoveryActiveId = recDraft.activeSessionId || null;
+const recSessions = await loadSessions();
+if (recoveryActiveId) {
+  const existing = recSessions.find(s => s.id === recoveryActiveId);
+  if (existing) {
+    existing.text = recDraft.text;
+    existing.date = existing.date; // unchanged for test
+    await upsertSession(existing);
+  }
+}
+clearDraft();
+
+const afterRecovery = await loadSessions();
+const recMatches = afterRecovery.filter(s => s.id === REC_ID);
+assert('recovery save — no duplicate created', recMatches.length, 1);
+assert('recovery save — text updated in place', recMatches[0]?.text, 'טקסט ראשוני עם תוספות');
+assert('draft cleared after recovery save', loadDraft(), null);
+
+await removeSession(REC_ID);
+
 // ── Storage failure behaviour ─────────────────────────────────────────────────
 section('Storage error handling');
 
-// saveDraft returns false when localStorage.setItem throws
-const origDescriptor = Object.getOwnPropertyDescriptor(Storage.prototype, 'setItem');
-Object.defineProperty(Storage.prototype, 'setItem', {
-  value() { throw new DOMException('QuotaExceededError', 'QuotaExceededError'); },
-  writable: true, configurable: true
-});
-const draftResult = saveDraft('some text');
-Object.defineProperty(Storage.prototype, 'setItem', origDescriptor);
-assert('saveDraft returns false on quota error', draftResult, false);
-
-// upsertSession with degraded IDB falls through to localStorage; quota error
-// should surface as a StorageError (not a silent no-op)
-// We test this via the localStorage path by temporarily breaking setItem after
-// the IDB path is already taken — instead we verify the StorageError class is
-// exported and constructible.
+// StorageError is exported and constructible
 let storageErrorThrown = false;
 try {
   throw new StorageError('test', null);
