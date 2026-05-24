@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>נסיעה - הקלטת מחשבות</title>
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --surface: #13131a;
+      --surface2: #1c1c28;
+      --border: #2a2a3d;
+      --accent: #4f8ef7;
+      --accent-glow: rgba(79,142,247,0.3);
+      --red: #f74f4f;
+      --red-glow: rgba(247,79,79,0.3);
+      --green: #4ff7a0;
+      --text: #e8e8f0;
+      --text-dim: #8888a0;
+      --text-muted: #4a4a60;
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+    body {
+      font-family: 'Heebo', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── HEADER ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .app-title {
+      font-size: 20px;
+      font-weight: 900;
+      letter-spacing: -0.5px;
+      color: var(--text);
+    }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 12px;
+      border-radius: 99px;
+      font-size: 13px;
+      font-weight: 500;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      transition: all 0.3s;
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: all 0.3s;
+    }
+
+    .status-pill.recording .status-dot {
+      background: var(--red);
+      box-shadow: 0 0 8px var(--red-glow);
+      animation: pulse-dot 1.2s ease-in-out infinite;
+    }
+
+    .status-pill.recording {
+      border-color: var(--red);
+      color: var(--red);
+    }
+
+    .status-pill.paused .status-dot { background: #f7c84f; }
+    .status-pill.paused { border-color: #f7c84f; color: #f7c84f; }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.7); }
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .icon-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 16px;
+      transition: all 0.2s;
+    }
+
+    .icon-btn:active { transform: scale(0.93); }
+    .icon-btn.active { border-color: var(--accent); color: var(--accent); }
+
+    /* ── SEARCH BAR ── */
+    #search-bar {
+      display: none;
+      padding: 10px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    #search-bar.visible { display: flex; gap: 8px; align-items: center; }
+
+    #search-input {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 12px;
+      color: var(--text);
+      font-family: 'Heebo', sans-serif;
+      font-size: 15px;
+      outline: none;
+      direction: rtl;
+    }
+
+    #search-input:focus { border-color: var(--accent); }
+    #search-input::placeholder { color: var(--text-muted); }
+
+    .search-count {
+      font-size: 13px;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+
+    /* ── TRANSCRIPT AREA ── */
+    #transcript-wrap {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    #transcript-edit {
+      width: 100%;
+      min-height: 100%;
+      background: transparent;
+      border: none;
+      outline: none;
+      resize: none;
+      font-family: 'Heebo', sans-serif;
+      font-size: 18px;
+      line-height: 1.7;
+      color: var(--text);
+      direction: rtl;
+      text-align: right;
+    }
+
+    #transcript-edit::placeholder { color: var(--text-muted); }
+
+    mark {
+      background: rgba(79,142,247,0.35);
+      color: var(--text);
+      border-radius: 3px;
+    }
+
+    /* Interim text (live, not yet finalized) */
+    #interim-display {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 0 16px 8px;
+      font-size: 16px;
+      direction: rtl;
+      text-align: right;
+      min-height: 28px;
+      flex-shrink: 0;
+    }
+
+    /* ── SESSION LIST ── */
+    #sessions-panel {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      z-index: 100;
+      flex-direction: column;
+    }
+
+    #sessions-panel.open { display: flex; }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+
+    .panel-title { font-size: 18px; font-weight: 700; }
+
+    .close-btn {
+      font-size: 22px;
+      cursor: pointer;
+      color: var(--text-dim);
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #sessions-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .session-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .session-card:active { transform: scale(0.98); border-color: var(--accent); }
+
+    .session-date {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+
+    .session-preview {
+      font-size: 15px;
+      color: var(--text);
+      line-height: 1.5;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .session-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .session-btn {
+      flex: 1;
+      padding: 7px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text-dim);
+      font-size: 13px;
+      font-family: 'Heebo', sans-serif;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.2s;
+    }
+
+    .session-btn.danger { color: var(--red); border-color: var(--red); }
+    .session-btn.primary { color: var(--accent); border-color: var(--accent); }
+
+    .empty-state {
+      text-align: center;
+      color: var(--text-muted);
+      padding: 60px 20px;
+      font-size: 16px;
+    }
+
+    /* ── BOTTOM CONTROLS ── */
+    #controls {
+      padding: 16px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .main-btn {
+      width: 100%;
+      padding: 18px;
+      border-radius: var(--radius);
+      border: none;
+      font-family: 'Heebo', sans-serif;
+      font-size: 18px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .main-btn:active { transform: scale(0.97); }
+
+    #btn-start {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 4px 24px var(--accent-glow);
+    }
+
+    #btn-pause {
+      background: var(--surface2);
+      color: #f7c84f;
+      border: 1px solid #f7c84f;
+    }
+
+    #btn-stop {
+      background: var(--surface2);
+      color: var(--red);
+      border: 1px solid var(--red);
+    }
+
+    .secondary-btns {
+      display: flex;
+      gap: 10px;
+    }
+
+    .sec-btn {
+      flex: 1;
+      padding: 13px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--text-dim);
+      font-family: 'Heebo', sans-serif;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      transition: all 0.2s;
+    }
+
+    .sec-btn:active { transform: scale(0.97); }
+    .sec-btn.gdocs { color: var(--accent); border-color: var(--accent); }
+    .sec-btn.gdocs:disabled { color: var(--text-muted); border-color: var(--border); }
+
+    /* ── SILENCE COUNTDOWN ── */
+    #silence-bar-wrap {
+      height: 3px;
+      background: var(--surface2);
+      border-radius: 99px;
+      overflow: hidden;
+      display: none;
+    }
+
+    #silence-bar-wrap.visible { display: block; }
+
+    #silence-bar {
+      height: 100%;
+      background: var(--accent);
+      width: 100%;
+      transition: width 1s linear;
+    }
+
+    /* ── TOAST ── */
+    #toast {
+      position: fixed;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 20px;
+      border-radius: 99px;
+      font-size: 14px;
+      opacity: 0;
+      transition: all 0.3s;
+      pointer-events: none;
+      white-space: nowrap;
+      z-index: 200;
+    }
+
+    #toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ── SESSION VIEWER ── */
+    #session-viewer {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      z-index: 150;
+      flex-direction: column;
+    }
+
+    #session-viewer.open { display: flex; }
+
+    #session-viewer-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      font-size: 17px;
+      line-height: 1.8;
+      direction: rtl;
+      text-align: right;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+  </style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="app-title">🚗 נסיעה</div>
+  <div class="status-pill" id="status-pill">
+    <div class="status-dot"></div>
+    <span id="status-text">מוכן</span>
+  </div>
+  <div class="header-actions">
+    <div class="icon-btn" id="btn-search" title="חיפוש">🔍</div>
+    <div class="icon-btn" id="btn-history" title="היסטוריה">📋</div>
+  </div>
+</header>
+
+<!-- SEARCH BAR -->
+<div id="search-bar">
+  <input type="text" id="search-input" placeholder="חפש בטקסט..." autocomplete="off">
+  <span class="search-count" id="search-count"></span>
+</div>
+
+<!-- INTERIM (live preview) -->
+<div id="interim-display"></div>
+
+<!-- TRANSCRIPT -->
+<div id="transcript-wrap">
+  <textarea id="transcript-edit" placeholder="לחץ על התחל והתחל לדבר...&#10;הטקסט יופיע כאן בזמן אמת."></textarea>
+</div>
+
+<!-- SILENCE BAR -->
+<div id="silence-bar-wrap">
+  <div id="silence-bar"></div>
+</div>
+
+<!-- CONTROLS -->
+<div id="controls">
+  <button class="main-btn" id="btn-start">🎙️ התחל הקלטה</button>
+  <button class="main-btn" id="btn-pause" style="display:none">⏸ השהה</button>
+  <div class="secondary-btns">
+    <button class="sec-btn" id="btn-stop" style="display:none">⏹ סיים</button>
+    <button class="sec-btn gdocs" id="btn-gdocs" disabled>📄 שמור ב-Google Docs</button>
+  </div>
+</div>
+
+<!-- SESSIONS PANEL -->
+<div id="sessions-panel">
+  <div class="panel-header">
+    <span class="panel-title">📋 הקלטות שמורות</span>
+    <div class="close-btn" id="close-sessions">✕</div>
+  </div>
+  <div id="sessions-list"></div>
+</div>
+
+<!-- SESSION VIEWER -->
+<div id="session-viewer">
+  <div class="panel-header">
+    <span class="panel-title" id="viewer-title"></span>
+    <div class="close-btn" id="close-viewer">✕</div>
+  </div>
+  <div id="session-viewer-content"></div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<script>
+// ─── AUDIO BEEPS ────────────────────────────────────────────────────────────
+const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+function beep(freq = 880, duration = 0.12, type = 'sine', vol = 0.18) {
+  try {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.value = freq;
+    osc.type = type;
+    gain.gain.setValueAtTime(vol, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + duration);
+  } catch(e) {}
+}
+
+function beepStart() { beep(660, 0.1); setTimeout(() => beep(880, 0.12), 120); }
+function beepStop()  { beep(880, 0.1); setTimeout(() => beep(550, 0.15), 100); }
+function beepPause() { beep(700, 0.1); }
+function beepResume(){ beep(550, 0.1); setTimeout(() => beep(750, 0.1), 100); }
+
+// ─── STORAGE ────────────────────────────────────────────────────────────────
+const STORAGE_KEY = 'nesiya_sessions';
+
+function loadSessions() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
+}
+
+function saveSessions(sessions) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+}
+
+function saveCurrentSession(text) {
+  if (!text.trim()) return null;
+  const sessions = loadSessions();
+  const now = new Date();
+  const id = now.getTime();
+  const session = {
+    id,
+    date: formatDate(now),
+    timestamp: now.toISOString(),
+    text: text.trim()
+  };
+  sessions.unshift(session);
+  saveSessions(sessions);
+  return session;
+}
+
+function formatDate(d) {
+  return d.toLocaleDateString('he-IL', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
+}
+
+// ─── SPEECH RECOGNITION ─────────────────────────────────────────────────────
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isRecording = false;
+let isPaused = false;
+let finalText = '';
+let silenceTimer = null;
+let silenceBarTimer = null;
+const SILENCE_DURATION = 5 * 60 * 1000; // 5 minutes
+let silenceStart = null;
+let silenceBarInterval = null;
+let autoResumeInterval = null;
+
+const transcriptEl = document.getElementById('transcript-edit');
+const interimEl    = document.getElementById('interim-display');
+const statusPill   = document.getElementById('status-pill');
+const statusText   = document.getElementById('status-text');
+const btnStart     = document.getElementById('btn-start');
+const btnPause     = document.getElementById('btn-pause');
+const btnStop      = document.getElementById('btn-stop');
+const btnGdocs     = document.getElementById('btn-gdocs');
+const silenceWrap  = document.getElementById('silence-bar-wrap');
+const silenceBar   = document.getElementById('silence-bar');
+
+function setStatus(state, label) {
+  statusPill.className = 'status-pill ' + state;
+  statusText.textContent = label;
+}
+
+function showRecordingUI() {
+  btnStart.style.display = 'none';
+  btnPause.style.display = 'flex';
+  btnPause.textContent = '⏸ השהה';
+  btnStop.style.display = 'flex';
+  setStatus('recording', 'מקליט');
+}
+
+function showPausedUI() {
+  btnPause.textContent = '▶️ המשך';
+  setStatus('paused', 'מושהה');
+}
+
+function showIdleUI() {
+  btnStart.style.display = 'flex';
+  btnPause.style.display = 'none';
+  btnStop.style.display = 'none';
+  setStatus('', 'מוכן');
+  interimEl.textContent = '';
+  stopSilenceBar();
+}
+
+function initRecognition() {
+  if (!SR) { showToast('הדפדפן לא תומך בזיהוי דיבור'); return false; }
+  recognition = new SR();
+  recognition.lang = 'he-IL';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+
+  recognition.onresult = (e) => {
+    resetSilenceTimer();
+    let interim = '';
+    let newFinal = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) { newFinal += t + ' '; }
+      else { interim += t; }
+    }
+    if (newFinal) {
+      finalText += newFinal;
+      transcriptEl.value = finalText;
+      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    }
+    interimEl.textContent = interim;
+  };
+
+  recognition.onerror = (e) => {
+    if (e.error === 'no-speech') { return; }
+    if (e.error === 'network') { showToast('שגיאת רשת - ממשיך...'); }
+    if (!isPaused && isRecording) restartRecognition();
+  };
+
+  recognition.onend = () => {
+    interimEl.textContent = '';
+    if (!isPaused && isRecording) {
+      setTimeout(() => { if (isRecording && !isPaused) restartRecognition(); }, 300);
+    }
+  };
+
+  return true;
+}
+
+function restartRecognition() {
+  try { recognition.start(); } catch(e) {
+    setTimeout(() => { try { recognition.start(); } catch(e2){} }, 500);
+  }
+}
+
+function startRecording() {
+  if (ctx.state === 'suspended') ctx.resume();
+  if (!initRecognition()) return;
+  finalText = transcriptEl.value;
+  isRecording = true;
+  isPaused = false;
+  recognition.start();
+  beepStart();
+  showRecordingUI();
+  resetSilenceTimer();
+  btnGdocs.disabled = false;
+  startSilenceBar();
+}
+
+function pauseRecording() {
+  if (!isRecording) return;
+  if (!isPaused) {
+    isPaused = true;
+    try { recognition.stop(); } catch(e) {}
+    beepPause();
+    showPausedUI();
+    stopSilenceTimer();
+    stopSilenceBar();
+  } else {
+    isPaused = false;
+    restartRecognition();
+    beepResume();
+    showRecordingUI();
+    resetSilenceTimer();
+    startSilenceBar();
+  }
+}
+
+function stopRecording(autoStop = false) {
+  isRecording = false;
+  isPaused = false;
+  try { recognition.stop(); recognition = null; } catch(e) {}
+  beepStop();
+  showIdleUI();
+  stopSilenceTimer();
+  if (autoStop) showToast('הפסקת דיבור - ההקלטה נעצרה');
+
+  // Auto-save locally
+  const text = transcriptEl.value.trim();
+  if (text) {
+    saveCurrentSession(text);
+    showToast('נשמר בהצלחה ✓');
+  }
+}
+
+// ─── SILENCE DETECTION ───────────────────────────────────────────────────────
+function resetSilenceTimer() {
+  clearTimeout(silenceTimer);
+  silenceStart = Date.now();
+  if (isRecording && !isPaused) {
+    silenceTimer = setTimeout(() => {
+      stopRecording(true);
+    }, SILENCE_DURATION);
+  }
+}
+
+function stopSilenceTimer() {
+  clearTimeout(silenceTimer);
+  silenceStart = null;
+}
+
+function startSilenceBar() {
+  silenceWrap.classList.add('visible');
+  silenceBar.style.width = '100%';
+  silenceBar.style.transition = 'none';
+  clearInterval(silenceBarInterval);
+  silenceStart = Date.now();
+  silenceBarInterval = setInterval(() => {
+    if (!silenceStart) return;
+    const elapsed = Date.now() - silenceStart;
+    const pct = Math.max(0, 100 - (elapsed / SILENCE_DURATION) * 100);
+    silenceBar.style.transition = 'width 1s linear';
+    silenceBar.style.width = pct + '%';
+  }, 1000);
+}
+
+function stopSilenceBar() {
+  silenceWrap.classList.remove('visible');
+  clearInterval(silenceBarInterval);
+}
+
+// ─── AUTO-RESUME AFTER CALL ──────────────────────────────────────────────────
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && isRecording && isPaused) {
+    // Was interrupted (e.g. call), auto-resume
+    setTimeout(() => {
+      if (isRecording && isPaused) {
+        isPaused = false;
+        restartRecognition();
+        beepResume();
+        showRecordingUI();
+        resetSilenceTimer();
+        startSilenceBar();
+        showToast('ממשיך הקלטה אוטומטית');
+      }
+    }, 800);
+  }
+  if (document.visibilityState === 'hidden' && isRecording && !isPaused) {
+    // Screen locked / call coming - pause gracefully
+    isPaused = true;
+    try { recognition.stop(); } catch(e) {}
+    stopSilenceTimer();
+    stopSilenceBar();
+  }
+});
+
+// ─── GOOGLE DOCS ─────────────────────────────────────────────────────────────
+function openInGoogleDocs() {
+  const text = transcriptEl.value.trim();
+  if (!text) { showToast('אין טקסט לשמירה'); return; }
+  const now = new Date();
+  const title = `נסיעה ${formatDate(now)}`;
+  const encoded = encodeURIComponent(text);
+  // Opens a pre-filled Google Docs document
+  const url = `https://docs.google.com/document/create?title=${encodeURIComponent(title)}&body=${encoded}`;
+  // Fallback: copy to clipboard + open Google Docs
+  navigator.clipboard.writeText(`${title}\n\n${text}`).then(() => {
+    showToast('הטקסט הועתק - פותח Google Docs...');
+    setTimeout(() => window.open('https://docs.google.com/document/create', '_blank'), 800);
+  }).catch(() => {
+    showToast('פותח Google Docs...');
+    window.open('https://docs.google.com/document/create', '_blank');
+  });
+}
+
+// ─── SEARCH ──────────────────────────────────────────────────────────────────
+const searchBar     = document.getElementById('search-bar');
+const searchInput   = document.getElementById('search-input');
+const searchCount   = document.getElementById('search-count');
+const btnSearch     = document.getElementById('btn-search');
+let searchVisible   = false;
+
+btnSearch.addEventListener('click', () => {
+  searchVisible = !searchVisible;
+  searchBar.classList.toggle('visible', searchVisible);
+  btnSearch.classList.toggle('active', searchVisible);
+  if (searchVisible) { searchInput.focus(); }
+  else { searchInput.value = ''; searchCount.textContent = ''; }
+});
+
+searchInput.addEventListener('input', () => {
+  const q = searchInput.value.trim();
+  if (!q) { searchCount.textContent = ''; return; }
+  const text = transcriptEl.value;
+  const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  const matches = text.match(re);
+  searchCount.textContent = matches ? `${matches.length} תוצאות` : 'לא נמצא';
+});
+
+// ─── HISTORY ─────────────────────────────────────────────────────────────────
+const sessionsPanel = document.getElementById('sessions-panel');
+const sessionsList  = document.getElementById('sessions-list');
+const btnHistory    = document.getElementById('btn-history');
+const closeSessions = document.getElementById('close-sessions');
+const sessionViewer = document.getElementById('session-viewer');
+const viewerTitle   = document.getElementById('viewer-title');
+const viewerContent = document.getElementById('session-viewer-content');
+const closeViewer   = document.getElementById('close-viewer');
+
+btnHistory.addEventListener('click', () => {
+  renderSessions();
+  sessionsPanel.classList.add('open');
+});
+
+closeSessions.addEventListener('click', () => sessionsPanel.classList.remove('open'));
+closeViewer.addEventListener('click', () => sessionViewer.classList.remove('open'));
+
+function renderSessions() {
+  const sessions = loadSessions();
+  if (!sessions.length) {
+    sessionsList.innerHTML = '<div class="empty-state">אין הקלטות שמורות עדיין</div>';
+    return;
+  }
+  sessionsList.innerHTML = sessions.map(s => `
+    <div class="session-card">
+      <div class="session-date">${s.date}</div>
+      <div class="session-preview">${s.text}</div>
+      <div class="session-actions">
+        <button class="session-btn primary" onclick="viewSession(${s.id})">צפה</button>
+        <button class="session-btn primary" onclick="loadSession(${s.id})">טען לעריכה</button>
+        <button class="session-btn danger" onclick="deleteSession(${s.id})">מחק</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function viewSession(id) {
+  const sessions = loadSessions();
+  const s = sessions.find(x => x.id === id);
+  if (!s) return;
+  viewerTitle.textContent = s.date;
+  viewerContent.textContent = s.text;
+  sessionViewer.classList.add('open');
+}
+
+function loadSession(id) {
+  const sessions = loadSessions();
+  const s = sessions.find(x => x.id === id);
+  if (!s) return;
+  transcriptEl.value = s.text;
+  finalText = s.text;
+  sessionsPanel.classList.remove('open');
+  btnGdocs.disabled = false;
+  showToast('הקלטה נטענה לעריכה');
+}
+
+function deleteSession(id) {
+  if (!confirm('למחוק הקלטה זו?')) return;
+  const sessions = loadSessions().filter(x => x.id !== id);
+  saveSessions(sessions);
+  renderSessions();
+  showToast('נמחק');
+}
+
+// ─── TOAST ───────────────────────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ─── BUTTON WIRING ───────────────────────────────────────────────────────────
+btnStart.addEventListener('click', startRecording);
+btnPause.addEventListener('click', pauseRecording);
+btnStop.addEventListener('click', () => stopRecording(false));
+btnGdocs.addEventListener('click', openInGoogleDocs);
+
+// ─── GUARD: browser support ───────────────────────────────────────────────────
+if (!SR) {
+  btnStart.disabled = true;
+  btnStart.textContent = 'הדפדפן אינו נתמך - השתמש ב-Chrome';
+}
+
+// Expose for inline handlers
+window.viewSession = viewSession;
+window.loadSession = loadSession;
+window.deleteSession = deleteSession;
+</script>
+</body>
+</html>
