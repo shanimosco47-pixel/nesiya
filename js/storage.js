@@ -98,11 +98,16 @@ export async function removeSession(id) {
   });
 }
 
-// Returns true on success, false on failure.  Never throws — draft saves are
-// best-effort and callers must check the return value before clearing the draft.
-export function saveDraft(text) {
+// Accepts a plain string (backward compat) or a structured draft object:
+//   { text, activeSessionId?, includesInterim? }
+// savedAt is always set to now so callers don't need to supply it.
+// Returns true on success, false on failure — caller must check before clearing draft.
+export function saveDraft(draftOrText) {
+  const draft = typeof draftOrText === 'string'
+    ? { text: draftOrText, activeSessionId: null, includesInterim: false, savedAt: Date.now() }
+    : { activeSessionId: null, includesInterim: false, ...draftOrText, savedAt: Date.now() };
   try {
-    localStorage.setItem(DRAFT_KEY, text);
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
     return true;
   } catch (e) {
     console.warn('[storage] saveDraft failed:', e);
@@ -110,9 +115,23 @@ export function saveDraft(text) {
   }
 }
 
+// Returns null when no draft exists.
+// Returns a draft object: { text, activeSessionId, savedAt, includesInterim }
+// Handles backward compat: plain-string drafts written by old app versions are
+// wrapped into the object shape with activeSessionId: null.
 export function loadDraft() {
-  try { return localStorage.getItem(DRAFT_KEY) || ''; } catch { return ''; }
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    try {
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === 'object' && typeof obj.text === 'string') return obj;
+    } catch {}
+    // Backward compat: old version stored a plain string
+    return { text: raw, activeSessionId: null, savedAt: null, includesInterim: false };
+  } catch { return null; }
 }
+
 export function clearDraft() {
   try { localStorage.removeItem(DRAFT_KEY); } catch {}
 }

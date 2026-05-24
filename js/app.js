@@ -110,15 +110,18 @@ async function persistCurrentSession(text) {
 
 // ─── AUTOSAVE ─────────────────────────────────────────────────────────────────
 let draftTimer = null;
+let _draftWarnSent = false;
 
 function scheduleDraftSave() {
   clearTimeout(draftTimer);
   draftTimer = setTimeout(() => {
-    // Always save the full textarea value so interim text visible on screen is
-    // also recovered after a crash.  The recovery UI warns the user that it may
-    // include unconfirmed speech.
     const text = els.transcript.value.trim();
-    if (text) saveDraft(text); else clearDraft();
+    if (!text) { clearDraft(); return; }
+    const ok = saveDraft({ text, activeSessionId, includesInterim: false });
+    if (!ok && !_draftWarnSent) {
+      _draftWarnSent = true;
+      showToast('אחסון מלא — לא ניתן לשמור טיוטה');
+    }
   }, 1500);
 }
 
@@ -137,6 +140,7 @@ async function continueRecording() {
 
 async function beginRecording(existingText) {
   diagLog('record_start', { existingLen: existingText.trim().length });
+  _draftWarnSent = false;
   els.btnStart.style.display = 'none';
   els.btnContinue.style.display = 'none';
   await ensureAudioCtx();
@@ -204,8 +208,11 @@ recHandlers.onResult = (finalText, _sessionFinalText, interim) => {
   // is included so recovery is as complete as possible — the recovery UI warns
   // the user it may contain unconfirmed speech.
   if (finalText.trim()) {
-    const ok = saveDraft(finalText + interim);
-    if (!ok) showToast('אחסון מלא — לא ניתן לשמור טיוטה');
+    const ok = saveDraft({ text: finalText + interim, activeSessionId, includesInterim: !!interim.trim() });
+    if (!ok && !_draftWarnSent) {
+      _draftWarnSent = true;
+      showToast('אחסון מלא — לא ניתן לשמור טיוטה');
+    }
   } else {
     scheduleDraftSave();
   }
@@ -407,9 +414,10 @@ const recoveryModal   = document.getElementById('recovery-modal');
 const recoveryPreview = document.getElementById('recovery-preview');
 
 function showRecoveryModal(draft) {
-  recoveryPreview.textContent = draft.length > 400
-    ? draft.slice(0, 400) + '…'
-    : draft;
+  const text = draft.text;
+  recoveryPreview.textContent = text.length > 400
+    ? text.slice(0, 400) + '…'
+    : text;
   recoveryModal.style.display = 'flex';
 }
 
@@ -417,22 +425,24 @@ document.getElementById('btn-recovery-continue').addEventListener('click', () =>
   const draft = loadDraft();
   if (!draft) return;
   recoveryModal.style.display = 'none';
-  els.transcript.value = draft;
-  rec.finalText = draft;
+  if (draft.activeSessionId) activeSessionId = draft.activeSessionId;
+  els.transcript.value = draft.text;
+  rec.finalText = draft.text;
   els.btnGdocs.disabled = false;
   showIdleUI();
   showToast('טיוטה שוחזרה');
-  beginRecording(draft);
+  beginRecording(draft.text);
 });
 
 document.getElementById('btn-recovery-save').addEventListener('click', async () => {
   const draft = loadDraft();
   if (!draft) return;
   recoveryModal.style.display = 'none';
-  els.transcript.value = draft;
-  rec.finalText = draft;
+  if (draft.activeSessionId) activeSessionId = draft.activeSessionId;
+  els.transcript.value = draft.text;
+  rec.finalText = draft.text;
   try {
-    await persistCurrentSession(draft);
+    await persistCurrentSession(draft.text);
     clearDraft();
     showToast('נשמר כהקלטה ✓');
   } catch (e) {
@@ -453,7 +463,7 @@ async function checkRecovery() {
   if (!draft) return;
   const sessions = await loadSessions();
   // Exact-text match: draft was already saved before the crash
-  if (sessions.some(s => s.text === draft)) { clearDraft(); return; }
+  if (sessions.some(s => s.text === draft.text)) { clearDraft(); return; }
   showRecoveryModal(draft);
 }
 
