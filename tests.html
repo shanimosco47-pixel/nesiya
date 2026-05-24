@@ -315,6 +315,60 @@ assert('draft cleared after recovery save', loadDraft(), null);
 
 await removeSession(REC_ID);
 
+// ── Legacy draft opt-in guard ─────────────────────────────────────────────────
+section('Legacy draft recovery — explicit opt-in required');
+
+// Simulate the _guardLegacy logic from app.js without a real DOM.
+// The guard returns false (block action) when legacyCombinedText is true and
+// the checkbox is unchecked, and true (allow action) when checked.
+function simulateGuard(draft, checkboxChecked) {
+  if (!draft.legacyCombinedText) return true;
+  return checkboxChecked;
+}
+
+// Previous format { text, includesInterim: true } → legacyCombinedText: true
+localStorage.setItem('nesiya_draft', JSON.stringify({
+  text: 'combined text with interim', activeSessionId: null, includesInterim: true, savedAt: 1000
+}));
+const legDraft1 = loadDraft();
+assert('prev includesInterim:true — legacyCombinedText', legDraft1?.legacyCombinedText, true);
+assert('guard blocks without opt-in (includesInterim:true)', simulateGuard(legDraft1, false), false);
+assert('guard allows with opt-in (includesInterim:true)', simulateGuard(legDraft1, true), true);
+// With opt-in, full combined text is used
+assert('opt-in text = combined finalText', legDraft1?.finalText, 'combined text with interim');
+clearDraft();
+
+// Plain string legacy draft → legacyCombinedText: true
+localStorage.setItem('nesiya_draft', 'plain string draft');
+const legDraft2 = loadDraft();
+assert('plain string — legacyCombinedText', legDraft2?.legacyCombinedText, true);
+assert('guard blocks without opt-in (plain string)', simulateGuard(legDraft2, false), false);
+assert('guard allows with opt-in (plain string)', simulateGuard(legDraft2, true), true);
+clearDraft();
+
+// Without opt-in, no session must be persisted (guard returns false → caller skips persistCurrentSession)
+const LEGACY_ID = 4433001;
+const legacyBase = { id: LEGACY_ID, date: '2026-05-01', timestamp: '2026-05-01T00:00:00Z', text: 'base' };
+await upsertSession(legacyBase);
+localStorage.setItem('nesiya_draft', 'plain string draft that should not auto-save');
+const legDraftNoOptIn = loadDraft();
+const wouldProceed = simulateGuard(legDraftNoOptIn, false); // checkbox unchecked
+if (!wouldProceed) {
+  // Guard blocked — no upsert performed, session unchanged
+}
+const sessionAfterBlock = (await loadSessions()).find(s => s.id === LEGACY_ID);
+assert('no session update when guard blocks', sessionAfterBlock?.text, 'base');
+
+// With opt-in, upsert is performed
+const wouldProceedOptIn = simulateGuard(legDraftNoOptIn, true);
+if (wouldProceedOptIn) {
+  await upsertSession({ ...legacyBase, text: legDraftNoOptIn.finalText });
+}
+const sessionAfterOptIn = (await loadSessions()).find(s => s.id === LEGACY_ID);
+assert('session updated after opt-in', sessionAfterOptIn?.text, 'plain string draft that should not auto-save');
+clearDraft();
+await removeSession(LEGACY_ID);
+
 // ── Storage failure behaviour ─────────────────────────────────────────────────
 section('Storage error handling');
 

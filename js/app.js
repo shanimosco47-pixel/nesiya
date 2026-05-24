@@ -416,19 +416,28 @@ if ('serviceWorker' in navigator) {
 })();
 
 // ─── CRASH RECOVERY UI ───────────────────────────────────────────────────────
-const recoveryModal       = document.getElementById('recovery-modal');
-const recoveryFinalWrap   = document.getElementById('recovery-final-wrap');
-const recoveryFinalEl     = document.getElementById('recovery-final');
-const recoveryInterimSect = document.getElementById('recovery-interim-section');
-const recoveryInterimEl   = document.getElementById('recovery-interim');
-const recoveryInclude     = document.getElementById('recovery-include-interim');
-const recoveryLegacyWrap  = document.getElementById('recovery-legacy-wrap');
-const recoveryLegacyEl    = document.getElementById('recovery-preview');
+const recoveryModal          = document.getElementById('recovery-modal');
+const recoveryFinalWrap      = document.getElementById('recovery-final-wrap');
+const recoveryFinalEl        = document.getElementById('recovery-final');
+const recoveryInterimSect    = document.getElementById('recovery-interim-section');
+const recoveryInterimEl      = document.getElementById('recovery-interim');
+const recoveryInclude        = document.getElementById('recovery-include-interim');
+const recoveryLegacyWrap     = document.getElementById('recovery-legacy-wrap');
+const recoveryLegacyEl       = document.getElementById('recovery-preview');
+const recoveryIncludeLegacy  = document.getElementById('recovery-include-legacy');
+const recoveryLegacyWarnEl   = document.getElementById('recovery-legacy-warn');
+
+// Hide the legacy warning as soon as the user checks the box.
+recoveryIncludeLegacy.addEventListener('change', () => {
+  if (recoveryIncludeLegacy.checked) recoveryLegacyWarnEl.style.display = 'none';
+});
 
 function _trunc(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
 
 function showRecoveryModal(draft) {
   recoveryInclude.checked = false;
+  recoveryIncludeLegacy.checked = false;
+  recoveryLegacyWarnEl.style.display = 'none';
 
   if (draft.legacyCombinedText) {
     // Old format: confirmed and interim were saved combined; can't separate.
@@ -452,8 +461,8 @@ function showRecoveryModal(draft) {
 }
 
 // Returns the text to use for continue/save based on checkbox state.
-// Legacy drafts always return the full combined text.
 // New drafts: include interimText only when the user explicitly opts in.
+// Legacy drafts: return the combined text (caller must have confirmed via _guardLegacy).
 function _recoveryText(draft) {
   if (draft.legacyCombinedText) return draft.finalText;
   if (recoveryInclude.checked && draft.interimText) {
@@ -462,9 +471,20 @@ function _recoveryText(draft) {
   return draft.finalText;
 }
 
+// Returns true when the action may proceed.  For legacy drafts, the user
+// must check the acknowledgement box; if not, shows the warning and returns
+// false so the button handlers keep the modal open.
+function _guardLegacy(draft) {
+  if (!draft.legacyCombinedText) return true;
+  if (recoveryIncludeLegacy.checked) return true;
+  recoveryLegacyWarnEl.style.display = '';
+  return false;
+}
+
 document.getElementById('btn-recovery-continue').addEventListener('click', () => {
   const draft = loadDraft();
   if (!draft) return;
+  if (!_guardLegacy(draft)) return; // keep modal open until checkbox checked
   recoveryModal.style.display = 'none';
   if (draft.activeSessionId) activeSessionId = draft.activeSessionId;
   const text = _recoveryText(draft);
@@ -479,6 +499,7 @@ document.getElementById('btn-recovery-continue').addEventListener('click', () =>
 document.getElementById('btn-recovery-save').addEventListener('click', async () => {
   const draft = loadDraft();
   if (!draft) return;
+  if (!_guardLegacy(draft)) return; // keep modal open until checkbox checked
   recoveryModal.style.display = 'none';
   if (draft.activeSessionId) activeSessionId = draft.activeSessionId;
   const text = _recoveryText(draft);

@@ -547,6 +547,16 @@
       flex-shrink: 0;
     }
 
+    .modal-warn {
+      font-size: 13px;
+      color: var(--red);
+      background: rgba(247,79,79,0.08);
+      border: 1px solid rgba(247,79,79,0.25);
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-top: 6px;
+    }
+
     /* Scrollbar */
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -657,6 +667,11 @@
     <div id="recovery-legacy-wrap" style="display:none">
       <div class="modal-subtitle">הטקסט עשוי לכלול מילים לא מאושרות מסוף ההקלטה</div>
       <div class="modal-preview" id="recovery-preview"></div>
+      <label class="modal-include-row">
+        <input type="checkbox" id="recovery-include-legacy">
+        <span>אני מבין שהטקסט עשוי לכלול מילים חלקיות, וכלול אותו בשמירה / בהמשך</span>
+      </label>
+      <div id="recovery-legacy-warn" class="modal-warn" style="display:none">יש לסמן את תיבת האישור לפני המשך הפעולה</div>
     </div>
 
     <div class="modal-actions">
