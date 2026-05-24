@@ -583,20 +583,32 @@ function saveSessions(sessions) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
 }
 
-function saveCurrentSession(text) {
-  if (!text.trim()) return null;
+// ID of the session currently loaded / being continued. Null means a fresh recording.
+let activeSessionId = null;
+
+// Upsert: updates an existing session if activeSessionId matches, otherwise creates new.
+function persistCurrentSession(text) {
+  if (!text.trim()) return;
   const sessions = loadSessions();
+  if (activeSessionId) {
+    const idx = sessions.findIndex(s => s.id === activeSessionId);
+    if (idx >= 0) {
+      sessions[idx].text = text.trim();
+      sessions[idx].date = formatDate(new Date());
+      saveSessions(sessions);
+      return;
+    }
+  }
   const now = new Date();
-  const id = now.getTime();
   const session = {
-    id,
+    id: now.getTime(),
     date: formatDate(now),
     timestamp: now.toISOString(),
     text: text.trim()
   };
+  activeSessionId = session.id;
   sessions.unshift(session);
   saveSessions(sessions);
-  return session;
 }
 
 function formatDate(d) {
@@ -790,6 +802,7 @@ function restartRecognition() {
 function startNewRecording() {
   transcriptEl.value = '';
   finalText = '';
+  activeSessionId = null; // ensure stop creates a brand-new session
   btnGdocs.disabled = true;
   startRecording();
 }
@@ -849,10 +862,10 @@ async function stopRecording(autoStop = false) {
   stopSilenceTimer();
   if (autoStop) showToast('הפסקת דיבור - ההקלטה נעצרה');
 
-  // Auto-save locally
+  // Auto-save locally (upsert so a continued session updates in place)
   const text = transcriptEl.value.trim();
   if (text) {
-    saveCurrentSession(text);
+    persistCurrentSession(text);
     showToast('נשמר בהצלחה ✓');
   }
 }
@@ -1041,8 +1054,10 @@ function loadSession(id) {
   if (!s) return;
   transcriptEl.value = s.text;
   finalText = s.text;
+  activeSessionId = id; // continuing this session will update it in place
   sessionsPanel.classList.remove('open');
   btnGdocs.disabled = false;
+  showIdleUI();
   showToast('הקלטה נטענה לעריכה');
 }
 
@@ -1073,6 +1088,7 @@ document.getElementById('btn-viewer-continue').addEventListener('click', () => {
   sessionsPanel.classList.remove('open');
   transcriptEl.value = s.text;
   finalText = s.text;
+  activeSessionId = s.id; // stop will update this session in place
   btnGdocs.disabled = false;
   startRecording();
 });
