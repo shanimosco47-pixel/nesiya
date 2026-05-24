@@ -487,7 +487,8 @@
 
 <!-- CONTROLS -->
 <div id="controls">
-  <button class="main-btn" id="btn-start">🎙️ התחל הקלטה</button>
+  <button class="main-btn" id="btn-start">🎙️ הקלטה חדשה</button>
+  <button class="main-btn" id="btn-continue" style="display:none">▶️ המשך הקלטה</button>
   <button class="main-btn" id="btn-pause" style="display:none">⏸ השהה</button>
   <div class="secondary-btns">
     <button class="sec-btn" id="btn-stop" style="display:none">⏹ סיים</button>
@@ -617,6 +618,7 @@ const interimEl    = document.getElementById('interim-display');
 const statusPill   = document.getElementById('status-pill');
 const statusText   = document.getElementById('status-text');
 const btnStart     = document.getElementById('btn-start');
+const btnContinue  = document.getElementById('btn-continue');
 const btnPause     = document.getElementById('btn-pause');
 const btnStop      = document.getElementById('btn-stop');
 const btnGdocs     = document.getElementById('btn-gdocs');
@@ -630,6 +632,7 @@ function setStatus(state, label) {
 
 function showRecordingUI() {
   btnStart.style.display = 'none';
+  btnContinue.style.display = 'none';
   btnPause.style.display = 'flex';
   btnPause.textContent = '⏸ השהה';
   btnStop.style.display = 'flex';
@@ -643,6 +646,7 @@ function showPausedUI() {
 
 function showIdleUI() {
   btnStart.style.display = 'flex';
+  btnContinue.style.display = transcriptEl.value.trim() ? 'flex' : 'none';
   btnPause.style.display = 'none';
   btnStop.style.display = 'none';
   setStatus('', 'מוכן');
@@ -723,6 +727,13 @@ function restartRecognition() {
   try { recognition.start(); } catch(e) {
     setTimeout(() => { if (isRecording && !isPaused) try { recognition.start(); } catch(e2){} }, 500);
   }
+}
+
+function startNewRecording() {
+  transcriptEl.value = '';
+  finalText = '';
+  btnGdocs.disabled = true;
+  startRecording();
 }
 
 function startRecording() {
@@ -987,7 +998,8 @@ function showToast(msg) {
 }
 
 // ─── BUTTON WIRING ───────────────────────────────────────────────────────────
-btnStart.addEventListener('click', startRecording);
+btnStart.addEventListener('click', startNewRecording);
+btnContinue.addEventListener('click', startRecording);
 btnPause.addEventListener('click', pauseRecording);
 btnStop.addEventListener('click', () => stopRecording(false));
 btnGdocs.addEventListener('click', openInGoogleDocs);
