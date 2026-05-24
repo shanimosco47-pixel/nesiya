@@ -21,15 +21,22 @@ let _restartPending = false;
 let _sessionId = 0;
 let _finalCount = 0;
 let _errCount = 0;
+// True from _init() until the first onresult fires — the window where Chrome
+// Android may replay previous-session text at the start of a new session.
+let _atSessionStart = false;
 
 export function isSupported() { return !!SR; }
+
+// Minimum word overlap required to consider a repetition as Chrome's inter-session
+// replay rather than legitimate repeated phrasing (e.g. a name used twice).
+const MIN_OVERLAP_WORDS = 3;
 
 export function dedupeAppend(existing, addition) {
   if (!addition.trim()) return existing;
   if (!existing.trim()) return addition.trim() + ' ';
   const a = existing.trimEnd().split(/\s+/);
   const b = addition.trim().split(/\s+/);
-  for (let len = Math.min(a.length, b.length, 20); len >= 1; len--) {
+  for (let len = Math.min(a.length, b.length, 20); len >= MIN_OVERLAP_WORDS; len--) {
     if (a.slice(-len).join(' ') === b.slice(0, len).join(' ')) {
       const rest = b.slice(len).join(' ');
       return a.join(' ') + (rest ? ' ' + rest : '') + ' ';
@@ -42,6 +49,7 @@ function _init() {
   if (!SR) { handlers.onError?.('הדפדפן לא תומך בזיהוי דיבור'); return false; }
   const id = ++_sessionId;
   _finalCount = 0;
+  _atSessionStart = true; // Chrome Android may replay prev-session text in first onresult
   _rec = new SR();
   _rec.lang = 'he-IL';
   _rec.continuous = false;
@@ -52,6 +60,10 @@ function _init() {
     if (_sessionId !== id) return;
     _errCount = 0;
     handlers.onResetSilence?.();
+    // Capture and clear the flag before any await/callback so subsequent
+    // results in the same session are treated as trusted mid-session text.
+    const isFirstResult = _atSessionStart;
+    _atSessionStart = false;
     let interim = '', newFinal = '';
     for (let i = _finalCount; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
@@ -59,7 +71,12 @@ function _init() {
       else interim += t;
     }
     if (newFinal) {
-      state.finalText = dedupeAppend(state.finalText, newFinal);
+      // Only deduplicate on the first result of a new session — the only moment
+      // Chrome Android replays previously-spoken text. Mid-session results are
+      // trusted directly to avoid removing legitimate repeated words/names.
+      state.finalText = isFirstResult
+        ? dedupeAppend(state.finalText, newFinal)
+        : state.finalText + newFinal;
       state.sessionFinalText += newFinal;
     }
     handlers.onResult?.(state.finalText, state.sessionFinalText, interim);

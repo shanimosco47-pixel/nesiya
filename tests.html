@@ -66,7 +66,7 @@ function assertTruthy(desc, value) {
 }
 
 // ── dedupeAppend ──────────────────────────────────────────────────────────────
-section('dedupeAppend');
+section('dedupeAppend — basic');
 
 assert('empty addition returns existing unchanged',
   dedupeAppend('hello world ', ''), 'hello world ');
@@ -77,28 +77,41 @@ assert('empty existing returns trimmed addition with trailing space',
 assert('no overlap: appends with single space separator',
   dedupeAppend('hello ', 'world').trim(), 'hello world');
 
-assert('full repeat: no duplication',
-  dedupeAppend('hello world ', 'hello world').trim(), 'hello world');
-
-assert('single-word suffix/prefix overlap',
-  dedupeAppend('the quick brown ', 'brown fox jumps').trim(),
-  'the quick brown fox jumps');
-
-assert('multi-word overlap',
-  dedupeAppend('one two three ', 'two three four').trim(),
-  'one two three four');
-
 assert('no shared words: plain append',
   dedupeAppend('alpha beta ', 'gamma delta').trim(),
   'alpha beta gamma delta');
 
-assert('Hebrew words overlap',
-  dedupeAppend('שלום עולם ', 'עולם טוב').trim(),
-  'שלום עולם טוב');
+section('dedupeAppend — min-overlap guard (≥3 words required)');
 
-assert('overlap at end of existing handles punctuation boundary',
-  dedupeAppend('אני הולך ', 'הולך הביתה').trim(),
-  'אני הולך הביתה');
+// 1-word overlap must NOT be removed (legitimate repeated name/word)
+assert('1-word overlap preserved — מירב appears twice',
+  dedupeAppend('צריך לדבר עם מירב ', 'מירב צריכה לשלוח את הדוח').trim(),
+  'צריך לדבר עם מירב מירב צריכה לשלוח את הדוח');
+
+// 2-word overlap must NOT be removed
+assert('2-word overlap preserved',
+  dedupeAppend('שלום עולם ', 'עולם טוב').trim(),
+  'שלום עולם עולם טוב');
+
+// 3-word overlap SHOULD be removed (Chrome inter-session replay signal)
+assert('3-word overlap removed (Chrome replay case)',
+  dedupeAppend('שלום עולם טוב ', 'עולם טוב בוקר').trim(),
+  'שלום עולם טוב בוקר');
+
+// 4-word overlap removed
+assert('4-word overlap removed',
+  dedupeAppend('one two three four ', 'two three four five').trim(),
+  'one two three four five');
+
+// Full replay: many-word overlap
+assert('full replay deduped — long Chrome replay',
+  dedupeAppend('שלום עולם מה שלומך ', 'שלום עולם מה שלומך הכל טוב').trim(),
+  'שלום עולם מה שלומך הכל טוב');
+
+// Repeated identical phrase — full overlap → preserve, no duplication
+assert('complete repeat produces no duplication',
+  dedupeAppend('אני הולך הביתה עכשיו ', 'אני הולך הביתה עכשיו').trim(),
+  'אני הולך הביתה עכשיו');
 
 // ── IndexedDB storage ─────────────────────────────────────────────────────────
 section('Storage — IndexedDB');
