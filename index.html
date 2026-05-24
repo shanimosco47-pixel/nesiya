@@ -475,7 +475,7 @@
     <button class="sec-btn" id="btn-stop" style="display:none">⏹ סיים</button>
     <button class="sec-btn gdocs" id="btn-gdocs" disabled>📄 שמור ב-Google Docs</button>
   </div>
-  <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:2px">עודכן 24.05.2026 · 18:35</div>
+  <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:2px">עודכן 24.05.2026 · 19:10</div>
 </div>
 
 <!-- SESSIONS PANEL -->
@@ -612,23 +612,37 @@ function showIdleUI() {
   stopSilenceBar();
 }
 
+// Remove words that overlap between end of existing and start of new text,
+// to handle Chrome Android's cumulative transcript replay across sessions.
+function dedupeAppend(existing, addition) {
+  if (!addition.trim()) return existing;
+  if (!existing.trim()) return addition.trim() + ' ';
+  const a = existing.trimEnd().split(/\s+/);
+  const b = addition.trim().split(/\s+/);
+  for (let len = Math.min(a.length, b.length, 20); len >= 1; len--) {
+    if (a.slice(-len).join(' ') === b.slice(0, len).join(' ')) {
+      const rest = b.slice(len).join(' ');
+      return a.join(' ') + (rest ? ' ' + rest : '') + ' ';
+    }
+  }
+  return existing.trimEnd() + ' ' + addition.trim() + ' ';
+}
+
 function initRecognition() {
   if (!SR) { showToast('הדפדפן לא תומך בזיהוי דיבור'); return false; }
   const sessionId = ++currentSessionId;
   finalResultsCount = 0;
   recognition = new SR();
   recognition.lang = 'he-IL';
-  recognition.continuous = true;
+  recognition.continuous = false; // deterministic lifecycle; overlap dedupe handles inter-session replay
   recognition.interimResults = true;
   recognition.maxAlternatives = 1;
 
   recognition.onresult = (e) => {
-    if (currentSessionId !== sessionId) return; // stale session, ignore
+    if (currentSessionId !== sessionId) return;
     resetSilenceTimer();
     let interim = '';
     let newFinal = '';
-    // Use finalResultsCount instead of e.resultIndex — Chrome Android can
-    // reset e.resultIndex to 0 mid-session, causing massive duplication
     for (let i = finalResultsCount; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
       if (e.results[i].isFinal) {
@@ -639,7 +653,7 @@ function initRecognition() {
       }
     }
     if (newFinal) {
-      finalText += newFinal;
+      finalText = dedupeAppend(finalText, newFinal);
       sessionFinalText += newFinal;
     }
     transcriptEl.value = finalText + interim;
@@ -654,14 +668,12 @@ function initRecognition() {
 
   recognition.onend = () => {
     if (currentSessionId !== sessionId) return;
-    // Don't reset textarea — keep showing last state (including any interim)
-    // so text doesn't visually disappear when recognition briefly stops
     if (!isPaused && isRecording && !restartScheduled) {
       restartScheduled = true;
       setTimeout(() => {
         restartScheduled = false;
         if (isRecording && !isPaused) restartRecognition();
-      }, 400);
+      }, 150); // shorter delay — with continuous=false each utterance needs a quick restart
     }
   };
 
@@ -669,7 +681,6 @@ function initRecognition() {
 }
 
 function restartRecognition() {
-  // Create a fresh object each time to avoid stale result-index causing duplicates
   initRecognition();
   try { recognition.start(); } catch(e) {
     setTimeout(() => { if (isRecording && !isPaused) try { recognition.start(); } catch(e2){} }, 500);
