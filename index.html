@@ -574,6 +574,7 @@ function beepResume(){ beep(550, 0.1); setTimeout(() => beep(750, 0.1), 100); }
 
 // ─── STORAGE ────────────────────────────────────────────────────────────────
 const STORAGE_KEY = 'nesiya_sessions';
+const DRAFT_KEY = 'nesiya_draft';
 
 function loadSessions() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } catch { return []; }
@@ -585,6 +586,16 @@ function saveSessions(sessions) {
 
 // ID of the session currently loaded / being continued. Null means a fresh recording.
 let activeSessionId = null;
+
+function saveDraft(text) {
+  try { localStorage.setItem(DRAFT_KEY, text); } catch(e) {}
+}
+function loadDraft() {
+  try { return localStorage.getItem(DRAFT_KEY) || ''; } catch { return ''; }
+}
+function clearDraft() {
+  try { localStorage.removeItem(DRAFT_KEY); } catch(e) {}
+}
 
 // Upsert: updates an existing session if activeSessionId matches, otherwise creates new.
 function persistCurrentSession(text) {
@@ -743,6 +754,7 @@ function initRecognition() {
     if (newFinal) {
       finalText = dedupeAppend(finalText, newFinal);
       sessionFinalText += newFinal;
+      saveDraft(finalText); // persist for crash recovery
     }
     transcriptEl.value = finalText + interim;
     transcriptEl.scrollTop = transcriptEl.scrollHeight;
@@ -866,6 +878,7 @@ async function stopRecording(autoStop = false) {
   const text = transcriptEl.value.trim();
   if (text) {
     persistCurrentSession(text);
+    clearDraft();
     showToast('נשמר בהצלחה ✓');
   }
 }
@@ -1102,6 +1115,33 @@ function showToast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2500);
 }
+
+// ─── AUTOSAVE & CRASH RECOVERY ───────────────────────────────────────────────
+let draftSaveTimer = null;
+
+transcriptEl.addEventListener('input', () => {
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(() => {
+    const text = transcriptEl.value.trim();
+    if (text) saveDraft(text); else clearDraft();
+  }, 1500);
+});
+
+(function checkCrashRecovery() {
+  const draft = loadDraft();
+  if (!draft) return;
+  const sessions = loadSessions();
+  if (sessions.some(s => s.text === draft)) { clearDraft(); return; }
+  if (confirm('נמצאה טיוטה שלא נשמרה. לשחזר?')) {
+    transcriptEl.value = draft;
+    finalText = draft;
+    btnGdocs.disabled = false;
+    showIdleUI();
+    showToast('טיוטה שוחזרה');
+  } else {
+    clearDraft();
+  }
+})();
 
 // ─── BUTTON WIRING ───────────────────────────────────────────────────────────
 btnStart.addEventListener('click', startNewRecording);
