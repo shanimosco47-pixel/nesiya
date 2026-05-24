@@ -545,9 +545,15 @@
 
 <script>
 // ─── AUDIO BEEPS ────────────────────────────────────────────────────────────
-const ctx = new (window.AudioContext || window.webkitAudioContext)();
+let ctx = null; // lazy — created on first user gesture to satisfy autoplay policy
+
+async function ensureAudioCtx() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') await ctx.resume();
+}
 
 function beep(freq = 880, duration = 0.12, type = 'sine', vol = 0.18) {
+  if (!ctx || ctx.state !== 'running') return; // skip if context not ready
   try {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -757,8 +763,8 @@ function startNewRecording() {
   startRecording();
 }
 
-function startRecording() {
-  if (ctx.state === 'suspended') ctx.resume();
+async function startRecording() {
+  await ensureAudioCtx();
   if (!initRecognition()) return;
   finalText = transcriptEl.value;
   sessionFinalText = '';
@@ -774,8 +780,9 @@ function startRecording() {
   acquireWakeLock();
 }
 
-function pauseRecording() {
+async function pauseRecording() {
   if (!isRecording) return;
+  await ensureAudioCtx();
   if (!isPaused) {
     isPaused = true;
     try { recognition.stop(); } catch(e) {}
@@ -795,11 +802,12 @@ function pauseRecording() {
   }
 }
 
-function stopRecording(autoStop = false) {
+async function stopRecording(autoStop = false) {
   isRecording = false;
   isPaused = false;
   restartScheduled = false;
   try { recognition.stop(); recognition = null; } catch(e) {}
+  await ensureAudioCtx();
   beepStop();
   releaseWakeLock();
   showIdleUI();
@@ -875,12 +883,28 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // ─── GOOGLE DOCS API ─────────────────────────────────────────────────────────
-// To enable direct Google Docs saving:
-//   1. Create an OAuth 2.0 Client ID at console.cloud.google.com
-//   2. Enable the Google Docs API for your project
-//   3. Add your GitHub Pages origin to "Authorized JavaScript origins"
-//   4. Paste the Client ID below
-const GOOGLE_CLIENT_ID = '';
+// Two integration options (set one of the constants below):
+//
+// Option A — Apps Script (simpler, no Cloud Console):
+//   1. Go to script.google.com → New project → paste:
+//        function doPost(e) {
+//          var d = JSON.parse(e.postData.contents);
+//          var doc = DocumentApp.create(d.title);
+//          doc.getBody().setText(d.text);
+//          return ContentService.createTextOutput(doc.getUrl())
+//            .setMimeType(ContentService.MimeType.TEXT);
+//        }
+//   2. Deploy → New deployment → Web App
+//      Execute as: Me | Who has access: Anyone
+//   3. Copy the Web App URL into APPS_SCRIPT_URL below
+//
+// Option B — Google Docs API + OAuth (proper, requires Google Cloud project):
+//   1. console.cloud.google.com → Enable Google Docs API
+//   2. Create OAuth 2.0 Client ID (Web application)
+//   3. Add authorized origin: https://shanimosco47-pixel.github.io
+//   4. Paste Client ID into GOOGLE_CLIENT_ID below
+const APPS_SCRIPT_URL = ''; // Option A
+const GOOGLE_CLIENT_ID  = ''; // Option B
 
 let tokenClient = null;
 let googleToken = null;
@@ -933,19 +957,56 @@ async function createGoogleDoc(text) {
   }
 }
 
+async function saveViaAppsScript(text) {
+  const title = `נסיעה ${formatDate(new Date())}`;
+  showToast('יוצר מסמך...');
+  const res = await fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ title, text })
+  });
+  if (!res.ok) throw new Error('script');
+  const docUrl = (await res.text()).trim();
+  showToastWithLink('נשמר ב-Google Docs ✓', docUrl);
+}
+
+function openDocsNewTab() {
+  // anchor click is more reliable than window.open in PWA standalone mode
+  const a = Object.assign(document.createElement('a'), {
+    href: 'https://docs.google.com/document/create',
+    target: '_blank',
+    rel: 'noopener noreferrer'
+  });
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 function openInGoogleDocs() {
   const text = transcriptEl.value.trim();
   if (!text) { showToast('אין טקסט לשמירה'); return; }
+
+  // Option B: OAuth + Docs API
   if (tokenClient) {
     if (googleToken) { createGoogleDoc(text); }
     else { pendingDocsText = text; tokenClient.requestAccessToken(); }
     return;
   }
-  // Fallback: open Docs immediately (user gesture still active), then copy text to clipboard
-  window.open('https://docs.google.com/document/create', '_blank');
+
+  // Option A: Apps Script webhook
+  if (APPS_SCRIPT_URL) {
+    saveViaAppsScript(text).catch(() => {
+      showToast('שגיאה — פותח Google Docs...');
+      openDocsNewTab();
+    });
+    return;
+  }
+
+  // Fallback: open Docs + copy to clipboard
+  openDocsNewTab();
   navigator.clipboard.writeText(`${formatDate(new Date())}\n\n${text}`)
     .then(() => showToast('הטקסט הועתק — פסט ב-Google Docs'))
-    .catch(() => showToast('פותח Google Docs...'));
+    .catch(() => {});
 }
 
 // ─── SEARCH ──────────────────────────────────────────────────────────────────
