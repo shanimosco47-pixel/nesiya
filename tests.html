@@ -93,9 +93,11 @@ assert('2-word overlap preserved',
   dedupeAppend('שלום עולם ', 'עולם טוב').trim(),
   'שלום עולם עולם טוב');
 
-// 3-word overlap SHOULD be removed (Chrome inter-session replay signal)
+// 3-word overlap SHOULD be removed (Chrome inter-session replay signal).
+// The last 3 words of existing must equal the first 3 words of addition for
+// the overlap to be detected (boundary match).
 assert('3-word overlap removed (Chrome replay case)',
-  dedupeAppend('שלום עולם טוב ', 'עולם טוב בוקר').trim(),
+  dedupeAppend('שלום עולם טוב ', 'שלום עולם טוב בוקר').trim(),
   'שלום עולם טוב בוקר');
 
 // 4-word overlap removed
