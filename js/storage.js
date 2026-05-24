@@ -98,16 +98,15 @@ export async function removeSession(id) {
   });
 }
 
-// Accepts a plain string (backward compat) or a structured draft object:
-//   { text, activeSessionId?, includesInterim? }
-// savedAt is always set to now so callers don't need to supply it.
-// Returns true on success, false on failure — caller must check before clearing draft.
-export function saveDraft(draftOrText) {
-  const draft = typeof draftOrText === 'string'
-    ? { text: draftOrText, activeSessionId: null, includesInterim: false, savedAt: Date.now() }
-    : { activeSessionId: null, includesInterim: false, ...draftOrText, savedAt: Date.now() };
+// saveDraft accepts { finalText, interimText?, activeSessionId? } or a legacy
+// plain string.  savedAt is always stamped here.
+// Returns true on success, false on storage failure — caller must check.
+export function saveDraft(draft) {
+  const d = typeof draft === 'string'
+    ? { finalText: draft, interimText: '', activeSessionId: null, savedAt: Date.now() }
+    : { interimText: '', activeSessionId: null, ...draft, savedAt: Date.now() };
   try {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
     return true;
   } catch (e) {
     console.warn('[storage] saveDraft failed:', e);
@@ -116,19 +115,41 @@ export function saveDraft(draftOrText) {
 }
 
 // Returns null when no draft exists.
-// Returns a draft object: { text, activeSessionId, savedAt, includesInterim }
-// Handles backward compat: plain-string drafts written by old app versions are
-// wrapped into the object shape with activeSessionId: null.
+// Always returns { finalText, interimText, activeSessionId, savedAt, legacyCombinedText }.
+// legacyCombinedText: true — confirmed and unconfirmed speech were stored combined and
+// cannot be separated; the UI must warn the user before treating finalText as confirmed.
 export function loadDraft() {
   try {
     const raw = localStorage.getItem(DRAFT_KEY);
     if (!raw) return null;
     try {
       const obj = JSON.parse(raw);
-      if (obj && typeof obj === 'object' && typeof obj.text === 'string') return obj;
+      if (obj && typeof obj === 'object') {
+        // Current format: { finalText, interimText, ... }
+        if (typeof obj.finalText === 'string') {
+          return {
+            finalText: obj.finalText,
+            interimText: obj.interimText || '',
+            activeSessionId: obj.activeSessionId ?? null,
+            savedAt: obj.savedAt ?? null,
+            legacyCombinedText: false,
+          };
+        }
+        // Previous format: { text, activeSessionId, includesInterim }
+        // includesInterim: true means text = finalText + interim combined; can't separate.
+        if (typeof obj.text === 'string') {
+          return {
+            finalText: obj.text,
+            interimText: '',
+            activeSessionId: obj.activeSessionId ?? null,
+            savedAt: obj.savedAt ?? null,
+            legacyCombinedText: !!obj.includesInterim,
+          };
+        }
+      }
     } catch {}
-    // Backward compat: old version stored a plain string
-    return { text: raw, activeSessionId: null, savedAt: null, includesInterim: false };
+    // Oldest format: plain string
+    return { finalText: raw, interimText: '', activeSessionId: null, savedAt: null, legacyCombinedText: true };
   } catch { return null; }
 }
 

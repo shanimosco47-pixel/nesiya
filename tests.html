@@ -146,35 +146,82 @@ assertTruthy('removeSession deletes both records',
 // ── Draft storage ─────────────────────────────────────────────────────────────
 section('Draft storage — basic');
 
-saveDraft('my draft text');
-assert('saveDraft (string) round-trip — text', loadDraft()?.text, 'my draft text');
+saveDraft({ finalText: 'my draft text', interimText: '' });
+assert('saveDraft round-trip — finalText', loadDraft()?.finalText, 'my draft text');
+assert('saveDraft round-trip — interimText empty', loadDraft()?.interimText, '');
+assert('saveDraft round-trip — legacyCombinedText false', loadDraft()?.legacyCombinedText, false);
 clearDraft();
 assert('clearDraft — loadDraft returns null', loadDraft(), null);
 
-saveDraft('another draft');
-saveDraft('overwritten');
-assert('second saveDraft overwrites first', loadDraft()?.text, 'overwritten');
+saveDraft({ finalText: 'another draft', interimText: '' });
+saveDraft({ finalText: 'overwritten', interimText: '' });
+assert('second saveDraft overwrites first', loadDraft()?.finalText, 'overwritten');
 clearDraft();
 
-section('Draft storage — object API');
+section('Draft storage — finalText / interimText separation');
 
-saveDraft({ text: 'שלום עולם', activeSessionId: 42 });
+saveDraft({ finalText: 'שלום עולם', interimText: 'מה קורה', activeSessionId: 42 });
 const dr1 = loadDraft();
-assert('draft object — text preserved', dr1?.text, 'שלום עולם');
-assert('draft object — activeSessionId preserved', dr1?.activeSessionId, 42);
-assertTruthy('draft object — savedAt is a number', typeof dr1?.savedAt === 'number');
+assert('finalText preserved', dr1?.finalText, 'שלום עולם');
+assert('interimText preserved separately', dr1?.interimText, 'מה קורה');
+assert('activeSessionId preserved', dr1?.activeSessionId, 42);
+assertTruthy('savedAt is a number', typeof dr1?.savedAt === 'number');
+assert('legacyCombinedText false for new format', dr1?.legacyCombinedText, false);
 clearDraft();
 
-// Backward compat: plain string written by old app version
+// Recovery: confirmed-only text — interimText absent from finalText
+saveDraft({ finalText: 'confirmed speech', interimText: 'partial unconfirmed', activeSessionId: null });
+const drRecovery = loadDraft();
+// The two fields must be separate — finalText must NOT contain interimText
+assert('recovery — finalText does not contain interimText automatically',
+  drRecovery?.finalText, 'confirmed speech');
+assert('recovery — interimText available separately',
+  drRecovery?.interimText, 'partial unconfirmed');
+clearDraft();
+
+// Recovery save without opt-in: using only finalText is safe confirmed text
+saveDraft({ finalText: 'confirmed', interimText: 'unconfirmed partial' });
+const drSave = loadDraft();
+// Simulates btn-recovery-save with checkbox unchecked: use finalText only
+const savedTextNoOptIn = drSave.finalText; // checkbox unchecked → finalText only
+assert('recovery save (no opt-in) uses finalText only', savedTextNoOptIn, 'confirmed');
+// Simulates btn-recovery-save with checkbox checked: include interimText
+const savedTextOptIn = (drSave.finalText + ' ' + drSave.interimText).trim();
+assert('recovery save (opt-in) includes interimText', savedTextOptIn, 'confirmed unconfirmed partial');
+clearDraft();
+
+section('Draft storage — backward compatibility');
+
+// Previous format: { text, activeSessionId, includesInterim: false }
+// → confirmed text only, legacyCombinedText: false
+localStorage.setItem('nesiya_draft', JSON.stringify({ text: 'prev confirmed', activeSessionId: 7, includesInterim: false, savedAt: 1000 }));
+const drPrev1 = loadDraft();
+assert('prev format (includesInterim:false) — finalText', drPrev1?.finalText, 'prev confirmed');
+assert('prev format (includesInterim:false) — interimText empty', drPrev1?.interimText, '');
+assert('prev format (includesInterim:false) — legacyCombinedText false', drPrev1?.legacyCombinedText, false);
+assert('prev format (includesInterim:false) — activeSessionId', drPrev1?.activeSessionId, 7);
+clearDraft();
+
+// Previous format: { text, activeSessionId, includesInterim: true }
+// → combined text, legacyCombinedText: true (can't separate confirmed from interim)
+localStorage.setItem('nesiya_draft', JSON.stringify({ text: 'combined text', activeSessionId: null, includesInterim: true, savedAt: 1000 }));
+const drPrev2 = loadDraft();
+assert('prev format (includesInterim:true) — finalText is combined', drPrev2?.finalText, 'combined text');
+assert('prev format (includesInterim:true) — legacyCombinedText true', drPrev2?.legacyCombinedText, true);
+clearDraft();
+
+// Oldest format: plain string
 localStorage.setItem('nesiya_draft', 'old plain string');
-const dr2 = loadDraft();
-assert('backward compat — text from plain string', dr2?.text, 'old plain string');
-assert('backward compat — activeSessionId null', dr2?.activeSessionId, null);
+const drPlain = loadDraft();
+assert('plain string compat — finalText', drPlain?.finalText, 'old plain string');
+assert('plain string compat — interimText empty', drPlain?.interimText, '');
+assert('plain string compat — legacyCombinedText true', drPlain?.legacyCombinedText, true);
+assert('plain string compat — activeSessionId null', drPlain?.activeSessionId, null);
 clearDraft();
 
 section('Draft storage — saveDraft returns bool');
 
-const okResult = saveDraft('test ok');
+const okResult = saveDraft({ finalText: 'test ok', interimText: '' });
 assert('saveDraft returns true on success', okResult, true);
 
 const origDescriptorDraft = Object.getOwnPropertyDescriptor(Storage.prototype, 'setItem');
@@ -182,7 +229,7 @@ Object.defineProperty(Storage.prototype, 'setItem', {
   value() { throw new DOMException('QuotaExceededError', 'QuotaExceededError'); },
   writable: true, configurable: true
 });
-const failResult = saveDraft('fail');
+const failResult = saveDraft({ finalText: 'fail', interimText: '' });
 Object.defineProperty(Storage.prototype, 'setItem', origDescriptorDraft);
 assert('saveDraft returns false on quota error', failResult, false);
 clearDraft();
@@ -239,21 +286,22 @@ const REC_ID = 5544001;
 const recBase = { id: REC_ID, date: '2026-04-01', timestamp: '2026-04-01T00:00:00Z', text: 'טקסט ראשוני' };
 await upsertSession(recBase);
 
-// Draft saved mid-recording with activeSessionId set
-saveDraft({ text: 'טקסט ראשוני עם תוספות', activeSessionId: REC_ID });
+// Draft saved mid-recording: confirmed text + interim, with activeSessionId set
+saveDraft({ finalText: 'טקסט ראשוני עם תוספות', interimText: 'מילים חלקיות', activeSessionId: REC_ID });
 const recDraft = loadDraft();
 assert('recovery draft — activeSessionId round-trips', recDraft?.activeSessionId, REC_ID);
-assert('recovery draft — text round-trips', recDraft?.text, 'טקסט ראשוני עם תוספות');
+assert('recovery draft — finalText round-trips', recDraft?.finalText, 'טקסט ראשוני עם תוספות');
+assert('recovery draft — interimText round-trips', recDraft?.interimText, 'מילים חלקיות');
+assert('recovery draft — legacyCombinedText false', recDraft?.legacyCombinedText, false);
 
-// Simulate btn-recovery-save: restore activeSessionId then upsert
-// (mirrors the app.js handler exactly)
+// Simulate btn-recovery-save with checkbox unchecked: use finalText only (no interim).
+// Mirrors the _recoveryText() helper in app.js when recoveryInclude.checked = false.
 let recoveryActiveId = recDraft.activeSessionId || null;
 const recSessions = await loadSessions();
 if (recoveryActiveId) {
   const existing = recSessions.find(s => s.id === recoveryActiveId);
   if (existing) {
-    existing.text = recDraft.text;
-    existing.date = existing.date; // unchanged for test
+    existing.text = recDraft.finalText; // finalText only, interim excluded
     await upsertSession(existing);
   }
 }
@@ -262,7 +310,7 @@ clearDraft();
 const afterRecovery = await loadSessions();
 const recMatches = afterRecovery.filter(s => s.id === REC_ID);
 assert('recovery save — no duplicate created', recMatches.length, 1);
-assert('recovery save — text updated in place', recMatches[0]?.text, 'טקסט ראשוני עם תוספות');
+assert('recovery save — only finalText persisted (interim excluded)', recMatches[0]?.text, 'טקסט ראשוני עם תוספות');
 assert('draft cleared after recovery save', loadDraft(), null);
 
 await removeSession(REC_ID);

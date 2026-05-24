@@ -117,7 +117,8 @@ function scheduleDraftSave() {
   draftTimer = setTimeout(() => {
     const text = els.transcript.value.trim();
     if (!text) { clearDraft(); return; }
-    const ok = saveDraft({ text, activeSessionId, includesInterim: false });
+    // Manual textarea edits are fully confirmed by the user — no interim.
+    const ok = saveDraft({ finalText: text, interimText: '', activeSessionId });
     if (!ok && !_draftWarnSent) {
       _draftWarnSent = true;
       showToast('אחסון מלא — לא ניתן לשמור טיוטה');
@@ -203,18 +204,14 @@ async function stopAndSave(autoStop = false) {
 recHandlers.onResult = (finalText, _sessionFinalText, interim) => {
   els.transcript.value = finalText + interim;
   els.transcript.scrollTop = els.transcript.scrollHeight;
-  // Persist immediately on new final text so the most recent confirmed speech
-  // is in the draft even if the app crashes between utterances.  Interim text
-  // is included so recovery is as complete as possible — the recovery UI warns
-  // the user it may contain unconfirmed speech.
-  if (finalText.trim()) {
-    const ok = saveDraft({ text: finalText + interim, activeSessionId, includesInterim: !!interim.trim() });
+  // Store finalText and interimText separately so recovery can present them
+  // distinctly and let the user decide whether to include unconfirmed speech.
+  if (finalText.trim() || interim.trim()) {
+    const ok = saveDraft({ finalText, interimText: interim, activeSessionId });
     if (!ok && !_draftWarnSent) {
       _draftWarnSent = true;
       showToast('אחסון מלא — לא ניתן לשמור טיוטה');
     }
-  } else {
-    scheduleDraftSave();
   }
 };
 
@@ -419,15 +416,50 @@ if ('serviceWorker' in navigator) {
 })();
 
 // ─── CRASH RECOVERY UI ───────────────────────────────────────────────────────
-const recoveryModal   = document.getElementById('recovery-modal');
-const recoveryPreview = document.getElementById('recovery-preview');
+const recoveryModal       = document.getElementById('recovery-modal');
+const recoveryFinalWrap   = document.getElementById('recovery-final-wrap');
+const recoveryFinalEl     = document.getElementById('recovery-final');
+const recoveryInterimSect = document.getElementById('recovery-interim-section');
+const recoveryInterimEl   = document.getElementById('recovery-interim');
+const recoveryInclude     = document.getElementById('recovery-include-interim');
+const recoveryLegacyWrap  = document.getElementById('recovery-legacy-wrap');
+const recoveryLegacyEl    = document.getElementById('recovery-preview');
+
+function _trunc(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
 
 function showRecoveryModal(draft) {
-  const text = draft.text;
-  recoveryPreview.textContent = text.length > 400
-    ? text.slice(0, 400) + '…'
-    : text;
+  recoveryInclude.checked = false;
+
+  if (draft.legacyCombinedText) {
+    // Old format: confirmed and interim were saved combined; can't separate.
+    recoveryLegacyWrap.style.display = '';
+    recoveryLegacyEl.textContent = _trunc(draft.finalText, 400);
+    recoveryFinalWrap.style.display = 'none';
+    recoveryInterimSect.style.display = 'none';
+  } else {
+    recoveryLegacyWrap.style.display = 'none';
+    recoveryFinalWrap.style.display = draft.finalText ? '' : 'none';
+    recoveryFinalEl.textContent = _trunc(draft.finalText, 300);
+    if (draft.interimText) {
+      recoveryInterimSect.style.display = '';
+      recoveryInterimEl.textContent = _trunc(draft.interimText, 200);
+    } else {
+      recoveryInterimSect.style.display = 'none';
+    }
+  }
+
   recoveryModal.style.display = 'flex';
+}
+
+// Returns the text to use for continue/save based on checkbox state.
+// Legacy drafts always return the full combined text.
+// New drafts: include interimText only when the user explicitly opts in.
+function _recoveryText(draft) {
+  if (draft.legacyCombinedText) return draft.finalText;
+  if (recoveryInclude.checked && draft.interimText) {
+    return (draft.finalText + ' ' + draft.interimText).trim();
+  }
+  return draft.finalText;
 }
 
 document.getElementById('btn-recovery-continue').addEventListener('click', () => {
@@ -435,12 +467,13 @@ document.getElementById('btn-recovery-continue').addEventListener('click', () =>
   if (!draft) return;
   recoveryModal.style.display = 'none';
   if (draft.activeSessionId) activeSessionId = draft.activeSessionId;
-  els.transcript.value = draft.text;
-  rec.finalText = draft.text;
+  const text = _recoveryText(draft);
+  els.transcript.value = text;
+  rec.finalText = text;
   els.btnGdocs.disabled = false;
   showIdleUI();
   showToast('טיוטה שוחזרה');
-  beginRecording(draft.text);
+  beginRecording(text);
 });
 
 document.getElementById('btn-recovery-save').addEventListener('click', async () => {
@@ -448,10 +481,11 @@ document.getElementById('btn-recovery-save').addEventListener('click', async () 
   if (!draft) return;
   recoveryModal.style.display = 'none';
   if (draft.activeSessionId) activeSessionId = draft.activeSessionId;
-  els.transcript.value = draft.text;
-  rec.finalText = draft.text;
+  const text = _recoveryText(draft);
+  els.transcript.value = text;
+  rec.finalText = text;
   try {
-    await persistCurrentSession(draft.text);
+    await persistCurrentSession(text);
     clearDraft();
     showToast('נשמר כהקלטה ✓');
   } catch (e) {
@@ -471,8 +505,13 @@ async function checkRecovery() {
   const draft = loadDraft();
   if (!draft) return;
   const sessions = await loadSessions();
-  // Exact-text match: draft was already saved before the crash
-  if (sessions.some(s => s.text === draft.text)) { clearDraft(); return; }
+  // Auto-clear only when confirmed text is already saved and there is no
+  // unconfirmed speech left for the user to review.
+  if (!draft.interimText && !draft.legacyCombinedText
+      && sessions.some(s => s.text === draft.finalText)) {
+    clearDraft();
+    return;
+  }
   showRecoveryModal(draft);
 }
 
