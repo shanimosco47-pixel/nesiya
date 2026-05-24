@@ -114,7 +114,10 @@ let draftTimer = null;
 function scheduleDraftSave() {
   clearTimeout(draftTimer);
   draftTimer = setTimeout(() => {
-    const text = (rec.isRecording ? rec.finalText : els.transcript.value).trim();
+    // Always save the full textarea value so interim text visible on screen is
+    // also recovered after a crash.  The recovery UI warns the user that it may
+    // include unconfirmed speech.
+    const text = els.transcript.value.trim();
     if (text) saveDraft(text); else clearDraft();
   }, 1500);
 }
@@ -190,7 +193,12 @@ async function stopAndSave(autoStop = false) {
 recHandlers.onResult = (finalText, _sessionFinalText, interim) => {
   els.transcript.value = finalText + interim;
   els.transcript.scrollTop = els.transcript.scrollHeight;
-  scheduleDraftSave();
+  // Persist immediately on new final text (not debounced) so the most recent
+  // confirmed speech is in the draft even if the app crashes between utterances.
+  // Interim text in the textarea is also included so recovery is as complete
+  // as possible — the recovery UI labels it as potentially unconfirmed.
+  if (finalText.trim()) saveDraft(finalText + interim);
+  else scheduleDraftSave(); // fallback for manual edits
 };
 
 recHandlers.onResetSilence = resetSilenceTimer;
@@ -380,21 +388,55 @@ if ('serviceWorker' in navigator) {
   }
 })();
 
+// ─── CRASH RECOVERY UI ───────────────────────────────────────────────────────
+const recoveryModal   = document.getElementById('recovery-modal');
+const recoveryPreview = document.getElementById('recovery-preview');
+
+function showRecoveryModal(draft) {
+  recoveryPreview.textContent = draft.length > 400
+    ? draft.slice(0, 400) + '…'
+    : draft;
+  recoveryModal.style.display = 'flex';
+}
+
+document.getElementById('btn-recovery-continue').addEventListener('click', () => {
+  const draft = loadDraft();
+  if (!draft) return;
+  recoveryModal.style.display = 'none';
+  els.transcript.value = draft;
+  rec.finalText = draft;
+  els.btnGdocs.disabled = false;
+  showIdleUI();
+  showToast('טיוטה שוחזרה');
+  beginRecording(draft);
+});
+
+document.getElementById('btn-recovery-save').addEventListener('click', async () => {
+  const draft = loadDraft();
+  if (!draft) return;
+  recoveryModal.style.display = 'none';
+  els.transcript.value = draft;
+  rec.finalText = draft;
+  await persistCurrentSession(draft);
+  clearDraft();
+  showIdleUI();
+  showToast('נשמר כהקלטה ✓');
+});
+
+document.getElementById('btn-recovery-discard').addEventListener('click', () => {
+  clearDraft();
+  recoveryModal.style.display = 'none';
+  showToast('טיוטה נמחקה');
+});
+
 // ─── CRASH RECOVERY + INIT ────────────────────────────────────────────────────
 async function checkRecovery() {
   const draft = loadDraft();
   if (!draft) return;
   const sessions = await loadSessions();
+  // Exact-text match: draft was already saved before the crash
   if (sessions.some(s => s.text === draft)) { clearDraft(); return; }
-  if (confirm('נמצאה טיוטה שלא נשמרה. לשחזר?')) {
-    els.transcript.value = draft;
-    rec.finalText = draft;
-    els.btnGdocs.disabled = false;
-    showIdleUI();
-    showToast('טיוטה שוחזרה');
-  } else {
-    clearDraft();
-  }
+  showRecoveryModal(draft);
 }
 
 (async function init() {

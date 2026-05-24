@@ -472,6 +472,55 @@
       letter-spacing: 0;
     }
 
+    /* Recovery modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(10,10,15,0.88);
+      z-index: 400;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .modal-card {
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      border-radius: var(--radius);
+      padding: 20px;
+      max-width: 400px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+    }
+
+    .modal-title { font-size: 17px; font-weight: 700; }
+
+    .modal-subtitle {
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    .modal-preview {
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.6;
+      max-height: 130px;
+      overflow-y: auto;
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: 10px;
+      direction: rtl;
+      text-align: right;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .modal-actions { display: flex; flex-direction: column; gap: 8px; }
+
     /* Scrollbar */
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -556,6 +605,20 @@
 
 <!-- TOAST -->
 <div id="toast"></div>
+
+<!-- CRASH RECOVERY MODAL -->
+<div id="recovery-modal" class="modal-overlay" style="display:none">
+  <div class="modal-card">
+    <div class="modal-title">📝 טיוטה שלא נשמרה</div>
+    <div class="modal-subtitle">הטקסט שמטה עשוי לכלול מילים לא מאושרות מסוף ההקלטה</div>
+    <div class="modal-preview" id="recovery-preview"></div>
+    <div class="modal-actions">
+      <button class="main-btn" id="btn-recovery-continue">🎙️ המשך הקלטה</button>
+      <button class="sec-btn" id="btn-recovery-save">💾 שמור כהקלטה</button>
+      <button class="sec-btn" style="color:var(--red);border-color:var(--red)" id="btn-recovery-discard">🗑️ מחק טיוטה</button>
+    </div>
+  </div>
+</div>
 
 <script type="module" src="./js/app.js"></script>
 </body>
