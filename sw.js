@@ -1,5 +1,8 @@
-const CACHE = 'nesiya-v2';
-const ASSETS = ['./', './index.html', './manifest.json', './icon.svg'];
+const CACHE = 'nesiya-v3';
+const ASSETS = [
+  './', './index.html', './manifest.json', './icon.svg',
+  './js/app.js', './js/storage.js', './js/recognition.js', './js/ui.js'
+];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
