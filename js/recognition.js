@@ -55,7 +55,7 @@ function _init() {
   diagLog('session_start', { id });
   _rec = new SR();
   _rec.lang = 'he-IL';
-  _rec.continuous = false;
+  _rec.continuous = true;
   _rec.interimResults = true;
   _rec.maxAlternatives = 1;
 
