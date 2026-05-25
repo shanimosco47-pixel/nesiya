@@ -3,6 +3,10 @@ import { diagLog } from './diagnostics.js';
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const MAX_CONSECUTIVE_ERRORS = 5;
 
+// Diagnostic-only state — not used for any behavioral decisions.
+let _sessionStartTime = 0;
+let _lastEndError = null; // error code from onerror before onend fires
+
 export const state = {
   isRecording: false,
   isPaused: false,
@@ -51,6 +55,8 @@ function _init() {
   if (!SR) { handlers.onError?.('הדפדפן לא תומך בזיהוי דיבור'); return false; }
   const id = ++_sessionId;
   _finalCount = 0;
+  _lastEndError = null;
+  _sessionStartTime = Date.now();
   _atSessionStart = true; // Chrome Android may replay prev-session text in first onresult
   diagLog('session_start', { id });
   _rec = new SR();
@@ -93,6 +99,7 @@ function _init() {
 
   _rec.onerror = (e) => {
     if (_sessionId !== id) return;
+    _lastEndError = e.error; // capture for onend diagnostic before it clears
     console.log('[recognition] error:', e.error, '(session', id, ')');
     diagLog('error', { id, error: e.error });
     if (e.error === 'no-speech') return;
@@ -122,14 +129,34 @@ function _init() {
 
   _rec.onend = () => {
     if (_sessionId !== id) return;
-    diagLog('session_end', { id });
-    if (state.isRecording && !state.isPaused && !_restartPending) {
-      _restartPending = true;
-      setTimeout(() => {
-        _restartPending = false;
-        if (state.isRecording && !state.isPaused) _restart();
-      }, 150);
+    const endError = _lastEndError;
+    diagLog('recognition_end', {
+      id,
+      endError,
+      isRecording: state.isRecording,
+      isPaused: state.isPaused,
+      restartPending: _restartPending,
+      msSinceStart: Date.now() - _sessionStartTime,
+    });
+
+    if (!state.isRecording || state.isPaused || _restartPending) {
+      diagLog('restart_skipped', {
+        reason: !state.isRecording ? 'stopped' : state.isPaused ? 'paused' : 'already_pending',
+      });
+      return;
     }
+
+    diagLog('restart_scheduled', {
+      id,
+      delay: 150,
+      reason: endError ?? 'unexpectedEnd',
+      msSinceStart: Date.now() - _sessionStartTime,
+    });
+    _restartPending = true;
+    setTimeout(() => {
+      _restartPending = false;
+      if (state.isRecording && !state.isPaused) _restart();
+    }, 150);
   };
 
   return true;
@@ -144,7 +171,7 @@ function _kill() {
 }
 
 function _restart() {
-  diagLog('restart');
+  diagLog('restart_exec');
   if (!_init()) return;
   try {
     _rec.start();
