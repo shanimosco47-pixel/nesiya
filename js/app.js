@@ -258,6 +258,7 @@ els.btnStart.addEventListener('click', startNew);
 els.btnContinue.addEventListener('click', continueRecording);
 els.btnPause.addEventListener('click', pause);
 els.btnStop.addEventListener('click', () => stopAndSave(false));
+els.btnGdocs.addEventListener('click', openInGoogleDocs);
 
 // ─── GOOGLE DOCS ─────────────────────────────────────────────────────────────
 function openInGoogleDocs() {
