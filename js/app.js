@@ -253,6 +253,12 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// ─── MAIN BUTTON LISTENERS ───────────────────────────────────────────────────
+els.btnStart.addEventListener('click', startNew);
+els.btnContinue.addEventListener('click', continueRecording);
+els.btnPause.addEventListener('click', pause);
+els.btnStop.addEventListener('click', () => stopAndSave(false));
+
 // ─── GOOGLE DOCS ─────────────────────────────────────────────────────────────
 function openInGoogleDocs() {
   const text = els.transcript.value.trim();
