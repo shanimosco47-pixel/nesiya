@@ -1,4 +1,4 @@
-const CACHE = 'nesiya-v11';
+const CACHE = 'nesiya-v12';
 const ASSETS = [
   './', './index.html', './manifest.json', './icon.svg',
   './js/app.js', './js/storage.js', './js/recognition.js',
