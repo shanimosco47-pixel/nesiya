@@ -3,7 +3,7 @@ import {
   saveDraft, loadDraft, clearDraft, formatDate, StorageError
 } from './storage.js';
 
-import { diagLog, copyDiagLog } from './diagnostics.js';
+import { diagLog, copyDiagLog, formatDiagLog, clearDiagLog } from './diagnostics.js';
 
 import {
   state as rec, handlers as recHandlers,
@@ -48,7 +48,11 @@ function resetSilenceTimer() {
   clearTimeout(silenceTimer);
   resetSilenceBar();
   if (rec.isRecording && !rec.isPaused) {
-    silenceTimer = setTimeout(() => stopAndSave(true), SILENCE_DURATION);
+    diagLog('silence_timer_reset', { durationMs: SILENCE_DURATION });
+    silenceTimer = setTimeout(() => {
+      diagLog('silence_timer_fired');
+      stopAndSave(true);
+    }, SILENCE_DURATION);
   }
 }
 
@@ -374,6 +378,28 @@ document.getElementById('btn-copy-diag').addEventListener('click', () => {
   copyDiagLog()
     .then(() => showToast('לוג אבחון הועתק ✓'))
     .catch(() => showToast('לא ניתן להעתיק — בדוק הרשאות'));
+});
+
+// ─── DIAGNOSTIC PANEL ─────────────────────────────────────────────────────────
+function _openDiagPanel() {
+  document.getElementById('diag-log-content').textContent = formatDiagLog() || '(לוג ריק)';
+  document.getElementById('diag-panel').classList.add('open');
+}
+
+document.getElementById('btn-diag').addEventListener('click', _openDiagPanel);
+
+document.getElementById('close-diag').addEventListener('click', () =>
+  document.getElementById('diag-panel').classList.remove('open'));
+
+document.getElementById('btn-diag-copy').addEventListener('click', () =>
+  copyDiagLog()
+    .then(() => showToast('לוג הועתק ✓'))
+    .catch(() => showToast('לא ניתן להעתיק')));
+
+document.getElementById('btn-diag-clear').addEventListener('click', () => {
+  clearDiagLog();
+  document.getElementById('diag-log-content').textContent = '(לוג נוקה)';
+  showToast('לוג נוקה');
 });
 
 document.getElementById('btn-export-json').addEventListener('click', async () => {
