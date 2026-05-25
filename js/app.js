@@ -16,32 +16,6 @@ import {
   renderSessions, startSilenceBar, resetSilenceBar, stopSilenceBar, uiCallbacks
 } from './ui.js';
 
-// ─── AUDIO BEEPS ─────────────────────────────────────────────────────────────
-let ctx = null;
-
-async function ensureAudioCtx() {
-  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-  if (ctx.state === 'suspended') await ctx.resume();
-}
-
-function beep(freq = 880, dur = 0.12, type = 'sine', vol = 0.18) {
-  if (!ctx || ctx.state !== 'running') return;
-  try {
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
-    osc.frequency.value = freq; osc.type = type;
-    gain.gain.setValueAtTime(vol, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
-    osc.start(ctx.currentTime); osc.stop(ctx.currentTime + dur);
-  } catch {}
-}
-
-function beepStart()  { beep(660, 0.1); setTimeout(() => beep(880, 0.12), 120); }
-function beepStop()   { beep(880, 0.1); setTimeout(() => beep(550, 0.15), 100); }
-function beepPause()  { beep(700, 0.1); }
-function beepResume() { beep(550, 0.1); setTimeout(() => beep(750, 0.1), 100); }
-
 // ─── WAKE LOCK ────────────────────────────────────────────────────────────────
 let wakeLock = null;
 
@@ -127,6 +101,8 @@ function scheduleDraftSave() {
 }
 
 // ─── RECORDING FLOW ──────────────────────────────────────────────────────────
+let _recordingStart = null;
+
 async function startNew() {
   els.transcript.value = '';
   rec.finalText = '';
@@ -144,23 +120,21 @@ async function beginRecording(existingText) {
   _draftWarnSent = false;
   els.btnStart.style.display = 'none';
   els.btnContinue.style.display = 'none';
-  await ensureAudioCtx();
   if (!startRecognition(existingText)) { showIdleUI(); return; }
-  beepStart();
+  _recordingStart = new Date();
   showRecordingUI();
+  els.statusText.textContent = 'מקליט • ' + _recordingStart.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
   resetSilenceTimer();
   startSilenceBar(SILENCE_DURATION);
   els.btnGdocs.disabled = false;
   acquireWakeLock();
 }
 
-async function pause() {
+function pause() {
   if (!rec.isRecording) return;
-  await ensureAudioCtx();
   if (!rec.isPaused) {
     diagLog('record_pause');
     pauseRecognition();
-    beepPause();
     showPausedUI();
     clearSilenceTimer();
     stopSilenceBar();
@@ -168,8 +142,10 @@ async function pause() {
   } else {
     diagLog('record_resume');
     resumeRecognition();
-    beepResume();
     showRecordingUI();
+    if (_recordingStart) {
+      els.statusText.textContent = 'מקליט • ' + _recordingStart.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+    }
     resetSilenceTimer();
     startSilenceBar(SILENCE_DURATION);
     acquireWakeLock();
@@ -179,8 +155,6 @@ async function pause() {
 async function stopAndSave(autoStop = false) {
   diagLog('record_stop', { autoStop, textLen: els.transcript.value.trim().length });
   stopRecognition();
-  await ensureAudioCtx();
-  beepStop();
   releaseWakeLock();
   clearSilenceTimer();
   stopSilenceBar();
@@ -219,8 +193,7 @@ recHandlers.onResetSilence = resetSilenceTimer;
 
 recHandlers.onError = (msg) => showToast(msg);
 
-// Fatal abort (mic denied, audio-capture): reset UI and resources but do NOT
-// beep or persist — the error toast from onError is the only user feedback needed.
+// Fatal abort (mic denied, audio-capture): reset UI and resources.
 // Draft is kept intentionally so the user can recover any text entered before
 // the mic was denied.
 recHandlers.onFatalAbort = () => {
