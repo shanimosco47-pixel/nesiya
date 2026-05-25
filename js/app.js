@@ -8,7 +8,7 @@ import { diagLog, copyDiagLog } from './diagnostics.js';
 import {
   state as rec, handlers as recHandlers,
   startRecognition, stopRecognition, pauseRecognition, resumeRecognition,
-  isSupported, dedupeAppend
+  isSupported, dedupeAppend, promoteFinalText
 } from './recognition.js';
 
 import {
@@ -204,8 +204,27 @@ recHandlers.onFatalAbort = () => {
 };
 
 // ─── VISIBILITY CHANGE ────────────────────────────────────────────────────────
+
+// Promote textarea value → rec.finalText before pause or resume.
+// The textarea is the authoritative source of truth: it may show interim text
+// that hasn't been finalised yet, and we want that text preserved if Chrome
+// restarts recognition after the screen turns back on.
+function _syncRecognitionState() {
+  const txt = els.transcript.value;
+  promoteFinalText(txt);
+  diagLog('sync_state_from_textarea', { textareaLen: txt.length, finalTextLen: rec.finalText.length });
+}
+
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden' && rec.isRecording && !rec.isPaused) {
+    // Promote visible text (incl. any interim) to rec.finalText so the resumed
+    // session starts from exactly what the user saw, not just the finalised portion.
+    _syncRecognitionState();
+    // Immediately persist the full visible transcript — don't rely on debounced
+    // autosave which may not have fired yet if the screen went off quickly.
+    const txt = els.transcript.value.trim();
+    const saved = txt ? saveDraft({ finalText: txt, interimText: '', activeSessionId }) : false;
+    diagLog('visibility_hide', { textLen: txt.length, finalTextLen: rec.finalText.length, draftSaved: saved });
     pauseRecognition();
     clearSilenceTimer();
     stopSilenceBar();
@@ -215,8 +234,13 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && rec.isRecording && rec.isPaused) {
     setTimeout(() => {
       if (rec.isRecording && rec.isPaused) {
+        // Re-sync before restarting recognition — textarea remains source of truth
+        // even if some state drifted while the page was in the background.
+        _syncRecognitionState();
+        diagLog('visibility_show', { finalTextLen: rec.finalText.length });
         resumeRecognition();
         showRecordingUI();
+        els.statusText.textContent = 'מקליט • ' + (_recordingStart ? _recordingStart.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : '');
         resetSilenceTimer();
         startSilenceBar(SILENCE_DURATION);
         showToast('ממשיך הקלטה אוטומטית');
