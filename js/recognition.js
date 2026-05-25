@@ -16,20 +16,16 @@ export const state = {
 
 // Callbacks wired by app.js
 export const handlers = {
-  onResult: null,      // (finalText, sessionFinalText, interim) => void
+  onResult: null,       // (finalText, sessionFinalText, interim) => void
   onResetSilence: null, // () => void
   onError: null,        // (msg) => void
-  onFatalAbort: null,  // () => void — called on fatal error (mic denied, audio-capture); no beep/save
+  onFatalAbort: null,   // () => void — called on fatal error (mic denied, audio-capture)
 };
 
 let _rec = null;
 let _restartPending = false;
 let _sessionId = 0;
-let _finalCount = 0;
 let _errCount = 0;
-// True from _init() until the first onresult fires — the window where Chrome
-// Android may replay previous-session text at the start of a new session.
-let _atSessionStart = false;
 
 export function isSupported() { return !!SR; }
 
@@ -54,14 +50,15 @@ export function dedupeAppend(existing, addition) {
 function _init() {
   if (!SR) { handlers.onError?.('הדפדפן לא תומך בזיהוי דיבור'); return false; }
   const id = ++_sessionId;
-  _finalCount = 0;
   _lastEndError = null;
   _sessionStartTime = Date.now();
-  _atSessionStart = true; // Chrome Android may replay prev-session text in first onresult
+  // Capture the confirmed transcript before this session starts.
+  // onresult rebuilds from e.results and prepends this — never appends to it.
+  const committedText = state.finalText;
   diagLog('session_start', { id });
   _rec = new SR();
   _rec.lang = 'he-IL';
-  _rec.continuous = false;
+  _rec.continuous = true;
   _rec.interimResults = true;
   _rec.maxAlternatives = 1;
 
@@ -69,31 +66,41 @@ function _init() {
     if (_sessionId !== id) return;
     _errCount = 0;
     handlers.onResetSilence?.();
-    // Capture and clear the flag before any await/callback so subsequent
-    // results in the same session are treated as trusted mid-session text.
-    const isFirstResult = _atSessionStart;
-    _atSessionStart = false;
-    let interim = '', newFinal = '';
-    for (let i = _finalCount; i < e.results.length; i++) {
-      const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) { newFinal += t + ' '; _finalCount = i + 1; }
+
+    // Rebuild the full session transcript from e.results on every event.
+    // With continuous=true Chrome accumulates results in e.results — treating
+    // it as the authoritative source for this session eliminates within-session
+    // duplication that arose from incremental append + _finalCount tracking.
+    let sessionFinal = '';
+    let interim = '';
+    for (let i = 0; i < e.results.length; i++) {
+      const r = e.results[i];
+      const t = r[0].transcript;
+      if (r.isFinal) sessionFinal += t + ' ';
       else interim += t;
     }
-    if (newFinal) {
-      // Only deduplicate on the first result of a new session — the only moment
-      // Chrome Android replays previously-spoken text. Mid-session results are
-      // trusted directly to avoid removing legitimate repeated words/names.
-      state.finalText = isFirstResult
-        ? dedupeAppend(state.finalText, newFinal)
-        : state.finalText + newFinal;
-      state.sessionFinalText += newFinal;
-    }
+
+    // Prepend committedText, deduping the boundary to handle Chrome Android's
+    // inter-session text replay. The start of sessionFinal is stable across
+    // calls (Chrome only appends to e.results), so the overlap is detected
+    // consistently — equivalent to checking only on the first result.
+    state.finalText = sessionFinal
+      ? dedupeAppend(committedText, sessionFinal)
+      : committedText;
+    state.sessionFinalText = sessionFinal;
+
     diagLog('result', {
       id,
-      final: newFinal.trim().slice(0, 60) || undefined,
-      interim: interim.slice(0, 30) || undefined,
-      firstResult: isFirstResult || undefined,
+      resultIndex: e.resultIndex,
+      resultsLen: e.results.length,
+      results: Array.from({ length: e.results.length }, (_, i) => ({
+        i,
+        isFinal: e.results[i].isFinal,
+        t: e.results[i][0].transcript.slice(0, 40),
+      })),
+      displayLen: (state.finalText + interim).length,
     });
+
     handlers.onResult?.(state.finalText, state.sessionFinalText, interim);
   };
 
