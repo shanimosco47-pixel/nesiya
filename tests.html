@@ -20,7 +20,11 @@
 <div id="summary"></div>
 
 <script type="module">
-import { dedupeAppend, state as recState, promoteFinalText, pauseRecognition } from './js/recognition.js';
+import {
+  dedupeAppend, state as recState, promoteFinalText, pauseRecognition,
+  startRecognition, handlers as recHandlers,
+  _testHooks, _setSRClassForTesting, _triggerOnEndForTesting,
+} from './js/recognition.js';
 import {
   initStorage, loadSessions, upsertSession, removeSession,
   saveDraft, loadDraft, clearDraft, StorageError
@@ -454,6 +458,133 @@ const reloadDraft = loadDraft();
 assert('post-reload draft: full transcript preserved', reloadDraft?.finalText, 'הטקסט המלא מלפני נעילת המסך');
 assert('post-reload draft: activeSessionId preserved', reloadDraft?.activeSessionId, 9900);
 clearDraft();
+
+// ── Restart guard — no-speech loop prevention ─────────────────────────────────
+section('Restart guard — no-speech loop prevention');
+
+// Guard fires when 2 recent restarts exist within the 60-second window
+_testHooks.restartTimestamps = [Date.now() - 5000, Date.now() - 2000];
+assertTruthy('guard fires with 2 recent silent restarts', _testHooks.checkGuard());
+
+// Guard clear when no restarts recorded
+_testHooks.restartTimestamps = [];
+assert('guard clear with empty restart list', _testHooks.checkGuard(), false);
+
+// Restarts older than 60 s are outside the window and do not count
+_testHooks.restartTimestamps = [Date.now() - 70000, Date.now() - 65000];
+assert('restarts older than 60 s not counted', _testHooks.checkGuard(), false);
+
+// Mix of old and recent: only the recent one counts
+_testHooks.restartTimestamps = [Date.now() - 70000, Date.now() - 2000];
+assert('1 old + 1 recent = 1 counted, no guard', _testHooks.checkGuard(), false);
+
+// Exactly at threshold triggers the guard
+_testHooks.restartTimestamps = [Date.now() - 30000, Date.now() - 1000];
+assertTruthy('exactly 2 recent restarts triggers guard', _testHooks.checkGuard());
+_testHooks.restartTimestamps = [];
+
+// onSilencePause fires when guard condition is met via onend
+{
+  const MockSRGuard = class { start() {} stop() {} };
+  _setSRClassForTesting(MockSRGuard);
+  let silencePauseFired = false;
+  const prevHandler = recHandlers.onSilencePause;
+  recHandlers.onSilencePause = () => { silencePauseFired = true; };
+  startRecognition('guard test'); // creates _rec, resets _restartTimestamps
+  _testHooks.restartTimestamps = [Date.now() - 5000, Date.now() - 2000]; // pre-fill guard
+  recState.isRecording = true; recState.isPaused = false;
+  _triggerOnEndForTesting();
+  assertTruthy('onSilencePause callback fires when guard triggers', silencePauseFired);
+  assert('isPaused set true when guard fires', recState.isPaused, true);
+  recHandlers.onSilencePause = prevHandler;
+  _setSRClassForTesting(null);
+  recState.isRecording = false; recState.isPaused = false;
+  _testHooks.restartTimestamps = [];
+}
+
+// User stop: onend with isRecording=false must not schedule a restart
+{
+  const MockSRStop = class { start() {} stop() {} };
+  _setSRClassForTesting(MockSRStop);
+  let beforeRestartCalledOnStop = false;
+  const prevBeforeRestart = recHandlers.onBeforeRestart;
+  recHandlers.onBeforeRestart = () => { beforeRestartCalledOnStop = true; };
+  startRecognition('stop test');
+  recState.isRecording = false; // simulate stopRecognition() path
+  _triggerOnEndForTesting();
+  assert('no restart scheduled when isRecording=false (user stop)', beforeRestartCalledOnStop, false);
+  recHandlers.onBeforeRestart = prevBeforeRestart;
+  _setSRClassForTesting(null);
+  _testHooks.restartTimestamps = [];
+}
+
+// Pause: onend with isPaused=true must not schedule a restart
+{
+  const MockSRPause = class { start() {} stop() {} };
+  _setSRClassForTesting(MockSRPause);
+  let beforeRestartCalledOnPause = false;
+  const prevBeforeRestart2 = recHandlers.onBeforeRestart;
+  recHandlers.onBeforeRestart = () => { beforeRestartCalledOnPause = true; };
+  startRecognition('pause test');
+  recState.isRecording = true; recState.isPaused = true; // simulate pauseRecognition()
+  _triggerOnEndForTesting();
+  assert('no restart scheduled when isPaused=true', beforeRestartCalledOnPause, false);
+  recHandlers.onBeforeRestart = prevBeforeRestart2;
+  _setSRClassForTesting(null);
+  recState.isRecording = false; recState.isPaused = false;
+  _testHooks.restartTimestamps = [];
+}
+
+// Unexpected end (no prior error): restart timestamp added synchronously
+{
+  const MockSRUnexpected = class { start() {} stop() {} };
+  _setSRClassForTesting(MockSRUnexpected);
+  startRecognition('unexpected end test'); // resets _restartTimestamps
+  _testHooks.lastEndError = null; // no prior error — unexpected close
+  recState.isRecording = true; recState.isPaused = false;
+  const countBefore = _testHooks.restartTimestamps.length;
+  _triggerOnEndForTesting();
+  assert('unexpected end adds restart timestamp', _testHooks.restartTimestamps.length, countBefore + 1);
+  _setSRClassForTesting(null);
+  recState.isRecording = false;
+  _testHooks.restartTimestamps = [];
+}
+
+// no-speech end: restart timestamp added (backoff is longer but still tracked)
+{
+  const MockSRNoSpeech = class { start() {} stop() {} };
+  _setSRClassForTesting(MockSRNoSpeech);
+  startRecognition('no-speech test');
+  _testHooks.restartTimestamps = [];
+  _testHooks.lastEndError = 'no-speech';
+  recState.isRecording = true; recState.isPaused = false;
+  const countBeforeNs = _testHooks.restartTimestamps.length;
+  _triggerOnEndForTesting();
+  assert('no-speech end adds restart timestamp (long backoff scheduled)', _testHooks.restartTimestamps.length, countBeforeNs + 1);
+  _setSRClassForTesting(null);
+  recState.isRecording = false;
+  _testHooks.restartTimestamps = [];
+  _testHooks.lastEndError = null;
+}
+
+// Final speech resets the restart guard
+{
+  _testHooks.restartTimestamps = [Date.now() - 5000, Date.now() - 2000]; // guard would fire
+  assertTruthy('guard condition met before speech', _testHooks.checkGuard());
+  // Simulate final speech clearing the timestamps (done inside onresult when newFinal ≠ '')
+  // We test the effect by checking that resumeRecognition resets timestamps too
+  // (user-explicit resume is also a guard reset path)
+  recState.isRecording = true; recState.isPaused = true;
+  const MockSRResume = class { start() {} stop() {} };
+  _setSRClassForTesting(MockSRResume);
+  // resumeRecognition resets _restartTimestamps
+  // (we can't call it without _rec being set — use startRecognition then set paused)
+  startRecognition('resume reset test'); // resets timestamps inside startRecognition
+  assert('startRecognition resets restart guard', _testHooks.checkGuard(), false);
+  _setSRClassForTesting(null);
+  recState.isRecording = false;
+  _testHooks.restartTimestamps = [];
+}
 
 // ── Summary ───────────────────────────────────────────────────────────────────
 const summary = document.getElementById('summary');
