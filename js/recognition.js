@@ -186,7 +186,7 @@ export function stopRecognition() {
 // Promote arbitrary text to rec.finalText — call before pause or resume so
 // the textarea (source of truth) is always what the next session starts from.
 export function promoteFinalText(text) {
-  state.finalText = text.trim() ? text.trimEnd() + ' ' : '';
+  state.finalText = text.trim() ? text.trim() + ' ' : '';
 }
 
 export function pauseRecognition() {
