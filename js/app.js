@@ -203,6 +203,20 @@ recHandlers.onFatalAbort = () => {
   showIdleUI();
 };
 
+// Restart guard fired: recognition paused after too many silent restarts with no
+// speech. Show paused UI so the user can tap ▶️ המשך to resume explicitly.
+recHandlers.onSilencePause = () => {
+  showPausedUI();
+  clearSilenceTimer();
+  stopSilenceBar();
+  releaseWakeLock();
+  showToast('זיהוי הדיבור נעצר בגלל שקט ממושך — לחץ \'המשך\' כדי להמשיך');
+};
+
+// Sync textarea → rec.finalText before each automatic restart so the new session
+// always appends to exactly what the user sees, not a stale internal state.
+recHandlers.onBeforeRestart = _syncRecognitionState;
+
 // ─── VISIBILITY CHANGE ────────────────────────────────────────────────────────
 
 // Promote textarea value → rec.finalText before pause or resume.
