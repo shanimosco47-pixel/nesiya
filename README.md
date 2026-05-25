@@ -20,6 +20,9 @@ Before merging or after changes to `js/recognition.js` or `js/app.js`:
 - [ ] **Session viewer continue** — history → "צפה" → "המשך הקלטה זו" → stop → same entry updated.
 - [ ] **Pause / resume** — tap ⏸, wait 10 s, tap ▶️, speech continues appending correctly.
 - [ ] **Screen lock** — lock screen while recording → unlock → recording resumes automatically.
+- [ ] **Screen lock — text preserved** — during active recording, speak a sentence, lock the
+  screen, wait 5 s, unlock → all previously captured text (including any interim words visible
+  before lock) is still in the textarea; new speech appends to it rather than replacing it.
 - [ ] **Wake Lock** — screen stays on during active recording (no auto-off).
 - [ ] **Crash recovery** — start recording, force-close Chrome, reopen → recovery modal
   appears with 3 choices; each choice works correctly.

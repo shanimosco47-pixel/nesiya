@@ -20,7 +20,7 @@
 <div id="summary"></div>
 
 <script type="module">
-import { dedupeAppend } from './js/recognition.js';
+import { dedupeAppend, state as recState, promoteFinalText, pauseRecognition } from './js/recognition.js';
 import {
   initStorage, loadSessions, upsertSession, removeSession,
   saveDraft, loadDraft, clearDraft, StorageError
@@ -391,6 +391,69 @@ const beforeRepeat = (await loadSessions()).length;
 await initStorage(); // second call — _db already open, legacy key already gone
 const afterRepeat = (await loadSessions()).length;
 assert('repeated initStorage does not create duplicates', afterRepeat, beforeRepeat);
+
+// ── Screen-off regression — promoteFinalText ──────────────────────────────────
+section('Screen-off regression — promoteFinalText');
+
+// Normal case: trailing space normalisation
+promoteFinalText('שלום עולם מה שלומך');
+assert('promoteFinalText sets finalText with trailing space',
+  recState.finalText, 'שלום עולם מה שלומך ');
+
+// Empty string: cleared, not set to ' '
+promoteFinalText('');
+assert('promoteFinalText empty text → empty string', recState.finalText, '');
+
+// Whitespace-only: treated as empty
+promoteFinalText('   ');
+assert('promoteFinalText whitespace-only → empty string', recState.finalText, '');
+
+// Leading/trailing whitespace trimmed, trailing space added
+promoteFinalText('  trimmed text  ');
+assert('promoteFinalText trims edges, adds trailing space', recState.finalText, 'trimmed text ');
+
+// pauseRecognition must not clear finalText (_rec is null in test env → stop() is no-op)
+recState.isRecording = true;
+recState.isPaused = false;
+recState.finalText = 'important transcript data ';
+pauseRecognition();
+assert('pauseRecognition preserves finalText', recState.finalText, 'important transcript data ');
+assert('pauseRecognition sets isPaused', recState.isPaused, true);
+// Reset state so remaining tests start clean
+recState.isRecording = false; recState.isPaused = false; recState.finalText = '';
+
+// After promote (which includes interim), dedupeAppend handles the next Chrome replay
+promoteFinalText('שלום עולם מה');  // textarea showed finalised "שלום עולם" + interim "מה"
+assert('post-promote: 3-word boundary replay is deduped after resume',
+  dedupeAppend(recState.finalText, 'שלום עולם מה הכל טוב').trim(),
+  'שלום עולם מה הכל טוב');
+
+// Full-sentence replay after promote — complete overlap still deduped
+promoteFinalText('אני הולך הביתה עכשיו');
+assert('post-promote: complete replay deduped',
+  dedupeAppend(recState.finalText, 'אני הולך הביתה עכשיו').trim(),
+  'אני הולך הביתה עכשיו');
+
+// ── Screen-off draft save — immediate persist ─────────────────────────────────
+section('Screen-off draft save — immediate persist');
+
+// Simulates the immediate saveDraft call in visibilitychange 'hidden':
+// finalText = full visible transcript (promoted from textarea, interim included)
+// interimText = '' (the field is cleared because we promoted interim into finalText)
+saveDraft({ finalText: 'שלום עולם מה', interimText: '' });
+const bgDraft = loadDraft();
+assert('screen-off draft: finalText = full visible text', bgDraft?.finalText, 'שלום עולם מה');
+assert('screen-off draft: interimText cleared (promoted into finalText)', bgDraft?.interimText, '');
+assert('screen-off draft: legacyCombinedText = false', bgDraft?.legacyCombinedText, false);
+clearDraft();
+
+// If Android reloads the page after backgrounding, the recovery modal must
+// show the full pre-lock transcript (not just the finalised portion).
+saveDraft({ finalText: 'הטקסט המלא מלפני נעילת המסך', interimText: '', activeSessionId: 9900 });
+const reloadDraft = loadDraft();
+assert('post-reload draft: full transcript preserved', reloadDraft?.finalText, 'הטקסט המלא מלפני נעילת המסך');
+assert('post-reload draft: activeSessionId preserved', reloadDraft?.activeSessionId, 9900);
+clearDraft();
 
 // ── Summary ───────────────────────────────────────────────────────────────────
 const summary = document.getElementById('summary');
