@@ -559,6 +559,57 @@ function makeResults(arr) {
     collapseSessionFinals(r).trim(), 'אני עושה ניסיון עכשיו');
 }
 
+// ── collapseSessionFinals — punctuation pass-through ─────────────────────────
+// Note: punctuation is handled in _trailingPunct (called from onresult),
+// not inside collapseSessionFinals itself. collapseSessionFinals skips
+// punctuation-only slots (tNorm === '' after _norm). These tests verify
+// that word content is unaffected when punctuation slots are present.
+section('collapseSessionFinals — punctuation slots ignored in word collapse');
+
+// Punctuation-only slots are skipped; word expansion works normally.
+{
+  const r = makeResults([
+    ['שלום', true],
+    ['שלום עולם', true],
+    ['.', true],              // period slot — must not disrupt expansion dedup
+  ]);
+  assert('punctuation slot does not corrupt word expansion',
+    collapseSessionFinals(r).trim(), 'שלום עולם');
+}
+
+// Duplicate period slots: collapseSessionFinals returns only word content.
+{
+  const r = makeResults([
+    ['יש', true],
+    ['יש הרבה', true],
+    ['.', true],
+    ['.', true],
+  ]);
+  assert('duplicate period slots — word content only in collapseSessionFinals',
+    collapseSessionFinals(r).trim(), 'יש הרבה');
+}
+
+// Empty-string slots (invisible Unicode noise) are ignored.
+{
+  const r = makeResults([
+    ['', true],
+    ['', true],
+    ['יש', true],
+    ['יש הרבה', true],
+  ]);
+  assert('empty slots before words are ignored',
+    collapseSessionFinals(r).trim(), 'יש הרבה');
+}
+
+// Newline-only slots are skipped (trimmed to '' → filtered).
+{
+  const r = makeResults([
+    ['\n', true],
+    ['\n', true],
+  ]);
+  assert('newline-only session → empty collapsed', collapseSessionFinals(r).trim(), '');
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 const summary = document.getElementById('summary');
 summary.textContent = `${pass} passed, ${fail} failed`;
