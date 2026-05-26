@@ -20,7 +20,7 @@
 <div id="summary"></div>
 
 <script type="module">
-import { dedupeAppend, state as recState, promoteFinalText, pauseRecognition } from './js/recognition.js';
+import { dedupeAppend, collapseSessionFinals, state as recState, promoteFinalText, pauseRecognition } from './js/recognition.js';
 import {
   initStorage, loadSessions, upsertSession, removeSession,
   saveDraft, loadDraft, clearDraft, StorageError
@@ -454,6 +454,110 @@ const reloadDraft = loadDraft();
 assert('post-reload draft: full transcript preserved', reloadDraft?.finalText, 'הטקסט המלא מלפני נעילת המסך');
 assert('post-reload draft: activeSessionId preserved', reloadDraft?.activeSessionId, 9900);
 clearDraft();
+
+// ── collapseSessionFinals — overlap-aware final collapsing ────────────────────
+section('collapseSessionFinals — Chrome Android expansion collapsing');
+
+function makeResults(arr) {
+  // Returns a minimal SpeechRecognitionResultList-alike (indexable, has .length)
+  const list = arr.map(([transcript, isFinal]) => {
+    const alt = { transcript }; alt[0] = alt;
+    return Object.assign([alt], { isFinal, 0: alt, length: 1 });
+  });
+  list.length = arr.length;
+  return list;
+}
+
+// 1. Expanding finals — the device-confirmed bug pattern
+{
+  const r = makeResults([
+    ['אני', true],
+    ['אני', true],
+    ['אני עושה', true],
+    ['אני עושה ניסיון', true],
+    ['אני עושה ניסיון ואני', true],
+    ['אני עושה ניסיון ואני רוצה', true],
+  ]);
+  assert('expanding finals collapse to longest version',
+    collapseSessionFinals(r).trim(), 'אני עושה ניסיון ואני רוצה');
+}
+
+// 2. Distinct non-overlapping segments are appended normally
+{
+  const r = makeResults([
+    ['שלום עולם', true],
+    ['מה שלומך', true],
+  ]);
+  assert('distinct segments append normally',
+    collapseSessionFinals(r).trim(), 'שלום עולם מה שלומך');
+}
+
+// 3. Subset result after a longer result is discarded
+{
+  const r = makeResults([
+    ['אני עושה ניסיון', true],
+    ['אני עושה', true],   // shorter — already superseded
+  ]);
+  assert('subset result is discarded, longer kept',
+    collapseSessionFinals(r).trim(), 'אני עושה ניסיון');
+}
+
+// 4. ≥3-word boundary overlap between distinct segments is de-duped
+{
+  const r = makeResults([
+    ['שלום עולם טוב', true],
+    ['עולם טוב מאוד', true],   // 2-word overlap "עולם טוב" < MIN → no dedup
+  ]);
+  // 2-word overlap is below MIN_OVERLAP_WORDS=3 → treated as new distinct segment
+  assert('2-word boundary overlap preserved (below MIN_OVERLAP_WORDS)',
+    collapseSessionFinals(r).trim(), 'שלום עולם טוב עולם טוב מאוד');
+}
+
+{
+  const r = makeResults([
+    ['שלום עולם טוב מאוד', true],
+    ['עולם טוב מאוד גדול', true],   // 3-word overlap → de-duped
+  ]);
+  assert('3-word boundary overlap is de-duped',
+    collapseSessionFinals(r).trim(), 'שלום עולם טוב מאוד גדול');
+}
+
+// 5. Empty results list returns empty string
+{
+  const r = makeResults([]);
+  assert('empty results list returns empty string', collapseSessionFinals(r).trim(), '');
+}
+
+// 6. Non-final results are ignored
+{
+  const r = makeResults([
+    ['interim only', false],
+  ]);
+  assert('non-final results are ignored', collapseSessionFinals(r).trim(), '');
+}
+
+// 7. Legitimate repeated word (מירב...מירב) is not collapsed
+{
+  const r = makeResults([
+    ['דיברתי עם מירב', true],
+    ['מירב אמרה שכן', true],
+  ]);
+  // 1-word overlap "מירב" < MIN_OVERLAP_WORDS=3 → both appear
+  assert('single-word repeated name is preserved (below MIN_OVERLAP_WORDS)',
+    collapseSessionFinals(r).trim(), 'דיברתי עם מירב מירב אמרה שכן');
+}
+
+// 8. Expansion followed by a new distinct segment
+{
+  const r = makeResults([
+    ['אני', true],
+    ['אני עושה', true],
+    ['אני עושה ניסיון', true],
+    ['עכשיו', true],            // genuinely new segment after expansion
+  ]);
+  assert('expansion then distinct segment: both appear correctly',
+    collapseSessionFinals(r).trim(), 'אני עושה ניסיון עכשיו');
+}
 
 // ── Summary ───────────────────────────────────────────────────────────────────
 const summary = document.getElementById('summary');
