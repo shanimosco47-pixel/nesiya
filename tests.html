@@ -20,7 +20,12 @@
 <div id="summary"></div>
 
 <script type="module">
-import { dedupeAppend, collapseSessionFinals, state as recState, promoteFinalText, pauseRecognition } from './js/recognition.js';
+import {
+  dedupeAppend, collapseSessionFinals, state as recState, promoteFinalText, pauseRecognition,
+  resumeRecognition, stopRecognition, startRecognition, handlers,
+  _forTesting
+} from './js/recognition.js';
+import { clearDiagLog, getDiagLog } from './js/diagnostics.js';
 import {
   initStorage, loadSessions, upsertSession, removeSession,
   saveDraft, loadDraft, clearDraft, StorageError
@@ -63,6 +68,30 @@ function assertTruthy(desc, value) {
     fail++;
   }
   out.appendChild(el);
+}
+
+function assertFalsy(desc, value) {
+  const el = document.createElement('pre');
+  if (!value) {
+    el.className = 'pass';
+    el.textContent = `✓ ${desc}`;
+    pass++;
+  } else {
+    el.className = 'fail';
+    el.textContent = `✗ ${desc}\n  expected falsy, got: ${JSON.stringify(value)}`;
+    fail++;
+  }
+  out.appendChild(el);
+}
+
+function makeMockSR(onStart) {
+  return class {
+    constructor() {}
+    set lang(_) {} set continuous(_) {} set interimResults(_) {} set maxAlternatives(_) {}
+    onresult = null; onerror = null; onend = null;
+    start() { onStart?.(); }
+    stop() {}
+  };
 }
 
 // ── dedupeAppend ──────────────────────────────────────────────────────────────
@@ -608,6 +637,167 @@ section('collapseSessionFinals — punctuation slots ignored in word collapse');
     ['\n', true],
   ]);
   assert('newline-only session → empty collapsed', collapseSessionFinals(r).trim(), '');
+}
+
+// ── VAD async race conditions ──────────────────────────────────────────────────
+section('VAD async race conditions');
+
+// Test 1 — init pending → resume → SR only starts AFTER getUserMedia settles
+{
+  _forTesting.reset();
+  recState.isRecording = true; recState.isPaused = true;
+  let resolveGUM, trackStopped = false, gumResolved = false, srStartedAfterGUM = false, srStartCalled = false;
+  _forTesting.setGetUserMedia(() => new Promise(r => resolveGUM = r));
+  _forTesting.setSR(makeMockSR(() => { srStartedAfterGUM = gumResolved; srStartCalled = true; }));
+  const initP1 = _forTesting.ensureVADInitialized();
+  const resumeP1 = resumeRecognition();
+  assertFalsy('T1: SR not called while GUM is pending', srStartCalled);
+  gumResolved = true;
+  resolveGUM({ getTracks: () => [{ stop() { trackStopped = true; } }] });
+  await Promise.all([initP1, resumeP1]);
+  assertTruthy('T1: local stream track stopped after init aborted', trackStopped);
+  assertFalsy('T1: no global vadStream leaked', _forTesting.getInternalState().vadStream);
+  assertTruthy('T1: SR.start was called exactly once', srStartCalled);
+  assertTruthy('T1: SR started only after GUM resolved', srStartedAfterGUM);
+  _forTesting.clearGetUserMedia(); _forTesting.clearSR();
+}
+
+// Test 2 — init pending → Stop → local stream released, no restart
+{
+  _forTesting.reset();
+  recState.isRecording = true; recState.isPaused = true;
+  let resolveGUM2, trackStopped2 = false, startCalled2 = false;
+  _forTesting.setGetUserMedia(() => new Promise(r => resolveGUM2 = r));
+  _forTesting.setSR(makeMockSR(() => startCalled2 = true));
+  clearDiagLog();
+  const initP2 = _forTesting.ensureVADInitialized();
+  stopRecognition();
+  resolveGUM2({ getTracks: () => [{ stop() { trackStopped2 = true; } }] });
+  await initP2;
+  assertFalsy('T2: no global vadStream after stop+resolve', _forTesting.getInternalState().vadStream);
+  assertTruthy('T2: local stream track stopped', trackStopped2);
+  assertFalsy('T2: SR.start not called', startCalled2);
+  assertTruthy('T2: vad_init_superseded logged', getDiagLog().some(e => e.type === 'vad_init_superseded'));
+  assertFalsy('T2: restart_exec not logged', getDiagLog().some(e => e.type === 'restart_exec'));
+  _forTesting.clearGetUserMedia(); _forTesting.clearSR();
+}
+
+// Test 3 — Stop during async VAD release → _restart() not called
+{
+  _forTesting.reset();
+  recState.isRecording = true; recState.isPaused = true;
+  let resolveClose3, startCalled3 = false;
+  // Shared promise: all calls to close() return the same promise so resolveClose3 is not clobbered
+  // if stopRecognition()'s _releaseVAD() also calls close() while the first await is pending.
+  const closeP3 = new Promise(r => resolveClose3 = r);
+  const mockCtx3 = { state: 'running', close: () => closeP3 };
+  const mockStream3 = { getTracks: () => [{ stop() {} }] };
+  _forTesting.setVADResources(mockStream3, mockCtx3, null);
+  _forTesting.setSR(makeMockSR(() => startCalled3 = true));
+  clearDiagLog();
+  const resumeP3 = resumeRecognition();
+  stopRecognition();
+  resolveClose3();
+  const result3 = await resumeP3;
+  assert('T3: resumeRecognition returns false when stopped during release', result3, false);
+  assertFalsy('T3: SR.start not called', startCalled3);
+  assertTruthy('T3: resume_aborted logged', getDiagLog().some(e => e.type === 'resume_aborted'));
+  _forTesting.clearSR();
+}
+
+// Test 4 — Duplicate resume → exactly one SR start, _resumePending cleared
+{
+  _forTesting.reset();
+  recState.isRecording = true; recState.isPaused = true;
+  let startCalled4 = 0;
+  _forTesting.setSR(makeMockSR(() => startCalled4++));
+  const [r4a, r4b] = await Promise.all([resumeRecognition(), resumeRecognition()]);
+  assert('T4: exactly one resume succeeded', [r4a, r4b].filter(Boolean).length, 1);
+  assert('T4: SR.start called exactly once', startCalled4, 1);
+  assertFalsy('T4: _resumePending cleared after resume', _forTesting.getInternalState().resumePending);
+  _forTesting.clearSR();
+}
+
+// Test 5 — Concurrent VAD init same generation → getUserMedia called once
+{
+  _forTesting.reset();
+  recState.isRecording = true; recState.isPaused = true;
+  let gumCalls5 = 0, resolveGUM5;
+  const mockTrack5 = { stop() {} };
+  const mockStream5 = { getTracks: () => [mockTrack5] };
+  _forTesting.setGetUserMedia(() => { gumCalls5++; return new Promise(r => resolveGUM5 = r); });
+  const p5a = _forTesting.ensureVADInitialized();
+  const p5b = _forTesting.ensureVADInitialized();
+  assert('T5: same promise returned (single-flight)', p5a === p5b, true);
+  resolveGUM5(mockStream5);
+  await Promise.all([p5a, p5b]);
+  assert('T5: getUserMedia called only once', gumCalls5, 1);
+  _forTesting.clearGetUserMedia();
+}
+
+// Test 6 — Old init invalidated by resume → new VAD cycle starts a fresh init
+{
+  _forTesting.reset();
+  recState.isRecording = true; recState.isPaused = true;
+  let gumCalls6 = 0, resolveGUM6;
+  _forTesting.setGetUserMedia(() => { gumCalls6++; return new Promise(r => resolveGUM6 = r); });
+  const initP6a = _forTesting.ensureVADInitialized();
+  assert('T6: getUserMedia called once on first init', gumCalls6, 1);
+  resumeRecognition();  // increments gen; will await initP6a
+  resolveGUM6({ getTracks: () => [{ stop() {} }] });
+  await initP6a;
+
+  _forTesting.reset();
+  recState.isRecording = true; recState.isPaused = true;
+  _forTesting.setGetUserMedia(() => { gumCalls6++; return new Promise(r => resolveGUM6 = r); });
+  const initP6b = _forTesting.ensureVADInitialized();
+  assert('T6: fresh promise created after reset (different from initP6a)', initP6a !== initP6b, true);
+  resolveGUM6({ getTracks: () => [{ stop() {} }] });
+  await initP6b;
+  assert('T6: getUserMedia called again for fresh init', gumCalls6, 2);
+  _forTesting.clearGetUserMedia();
+}
+
+// Test 7 — Stop → New Recording while old VAD init pending → SR waits for old GUM
+{
+  _forTesting.reset();
+  recState.isRecording = true; recState.isPaused = true;
+  let resolveGUM7, gumResolved7 = false, trackStopped7 = false, srStartedAfterGUM7 = false, startCalled7 = false;
+  _forTesting.setGetUserMedia(() => new Promise(r => resolveGUM7 = r));
+  _forTesting.setSR(makeMockSR(() => { srStartedAfterGUM7 = gumResolved7; startCalled7 = true; }));
+  const initP7 = _forTesting.ensureVADInitialized();
+  stopRecognition();  // gen++; old init will abort on GUM resolve
+  // DO NOT call _forTesting.reset() — keep _vadInitPromise live so startRecognition waits
+  const startP7 = startRecognition('');  // gen++; must await old _vadInitPromise
+  assertFalsy('T7: SR not started while old GUM is pending', startCalled7);
+  gumResolved7 = true;
+  resolveGUM7({ getTracks: () => [{ stop() { trackStopped7 = true; } }] });
+  await Promise.all([initP7, startP7]);
+  assertTruthy('T7: stale local stream track stopped', trackStopped7);
+  assertTruthy('T7: new SR started after old GUM resolved', startCalled7);
+  assertTruthy('T7: SR started only after GUM resolved', srStartedAfterGUM7);
+  _forTesting.clearGetUserMedia(); _forTesting.clearSR();
+}
+
+// Test 8 — VAD init never resolves → timeout → SR blocked
+{
+  _forTesting.reset();
+  recState.isRecording = true; recState.isPaused = true;
+  _forTesting.setGetUserMedia(() => new Promise(() => {}));  // never resolves
+  _forTesting.setVADInitTimeoutMs(50);
+  let startCalled8 = false, timeoutFired8 = false;
+  _forTesting.setSR(makeMockSR(() => startCalled8 = true));
+  handlers.onVADInitTimeout = () => { timeoutFired8 = true; };
+  clearDiagLog();
+  const initP8 = _forTesting.ensureVADInitialized();
+  const resumeP8 = resumeRecognition();
+  const result8 = await resumeP8;
+  assert('T8: resumeRecognition returns false on timeout', result8, false);
+  assertFalsy('T8: SR.start not called on timeout', startCalled8);
+  assertTruthy('T8: onVADInitTimeout fired', timeoutFired8);
+  assertTruthy('T8: vad_init_timeout logged', getDiagLog().some(e => e.type === 'vad_init_timeout'));
+  handlers.onVADInitTimeout = null;
+  _forTesting.clearGetUserMedia(); _forTesting.clearSR(); _forTesting.resetVADInitTimeoutMs();
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────────
