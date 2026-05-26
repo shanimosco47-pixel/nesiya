@@ -47,6 +47,13 @@ export function dedupeAppend(existing, addition) {
   return existing.trimEnd() + ' ' + addition.trim() + ' ';
 }
 
+// Strip invisible Unicode bidirectional control characters and normalize to NFC.
+// Chrome Android embeds RTL marks (U+200F), LTR marks (U+200E), embedding
+// controls (U+202A–U+202E), BOM (U+FEFF), and zero-width chars (U+200B–U+200D)
+// in Hebrew transcripts. These are invisible in logs but cause === to return
+// false even on visually identical strings.
+const _norm = (s) => s.normalize('NFC').replace(/[^\p{L}\p{N}\s]/gu, '');
+
 // Collapse a SpeechRecognitionResultList into a single de-duplicated string.
 //
 // Chrome Android with continuous=true emits multiple isFinal results that are
@@ -65,37 +72,48 @@ export function dedupeAppend(existing, addition) {
 //   • Otherwise apply the same ≥3-word boundary overlap check as
 //     dedupeAppend before appending, so legitimate distinct segments
 //     are appended correctly and 1–2-word legitimate repeats are preserved.
+//
+// All comparisons use _norm() to handle invisible Unicode chars in Chrome
+// Android Hebrew transcripts that make === fail on visually identical strings.
 export function collapseSessionFinals(results) {
   let collapsed = '';
+  let collapsedNorm = '';
   for (let i = 0; i < results.length; i++) {
     if (!results[i].isFinal) continue;
     const t = results[i][0].transcript.trim();
     if (!t) continue;
+    const tNorm = _norm(t);
+    if (!tNorm) continue;
 
     if (!collapsed) {
       collapsed = t + ' ';
+      collapsedNorm = tNorm;
       continue;
     }
 
-    const cWords = collapsed.trim().split(/\s+/);
-    const nWords = t.split(/\s+/);
-
-    // New result is a superset expansion: every word in collapsed matches the
-    // prefix of the new result — replace with the longer version.
-    if (nWords.length >= cWords.length &&
-        cWords.every((w, i) => w === nWords[i])) {
+    // Expansion: tNorm starts with all of collapsedNorm at a word boundary
+    // → replace accumulated with the longer version.
+    if (tNorm.length >= collapsedNorm.length &&
+        tNorm.startsWith(collapsedNorm) &&
+        (tNorm.length === collapsedNorm.length || tNorm[collapsedNorm.length] === ' ')) {
       collapsed = t + ' ';
+      collapsedNorm = tNorm;
       continue;
     }
 
-    // New result is a subset/prefix of collapsed: already have this content.
-    if (nWords.length <= cWords.length &&
-        nWords.every((w, i) => w === cWords[i])) {
+    // Subset: collapsedNorm starts with tNorm at a word boundary
+    // → already have this content, discard.
+    if (tNorm.length < collapsedNorm.length &&
+        collapsedNorm.startsWith(tNorm) &&
+        collapsedNorm[tNorm.length] === ' ') {
       continue;
     }
 
     // Check for word-level boundary overlap (≥ MIN_OVERLAP_WORDS) between the
     // end of collapsed and the start of the new result — same logic as dedupeAppend.
+    // Use normalized words so invisible Unicode chars don't break word matching.
+    const cWords = collapsedNorm.split(/\s+/);
+    const nWords = tNorm.split(/\s+/);
     let overlapLen = 0;
     for (let len = Math.min(cWords.length, nWords.length, 20); len >= MIN_OVERLAP_WORDS; len--) {
       if (cWords.slice(-len).join(' ') === nWords.slice(0, len).join(' ')) {
@@ -104,12 +122,14 @@ export function collapseSessionFinals(results) {
       }
     }
     if (overlapLen >= MIN_OVERLAP_WORDS) {
-      const rest = nWords.slice(overlapLen).join(' ');
+      const rawWords = t.split(/\s+/);
+      const rest = rawWords.slice(overlapLen).join(' ');
       collapsed = collapsed.trimEnd() + (rest ? ' ' + rest : '') + ' ';
     } else {
       // No significant overlap — treat as a new distinct segment.
       collapsed = collapsed + t + ' ';
     }
+    collapsedNorm = _norm(collapsed.trim());
   }
   return collapsed;
 }
