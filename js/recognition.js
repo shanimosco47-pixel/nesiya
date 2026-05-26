@@ -47,13 +47,79 @@ export function dedupeAppend(existing, addition) {
   return existing.trimEnd() + ' ' + addition.trim() + ' ';
 }
 
+// Collapse a SpeechRecognitionResultList into a single de-duplicated string.
+//
+// Chrome Android with continuous=true emits multiple isFinal results that are
+// superseding expansions of the same utterance rather than distinct segments:
+//   e.results[0] = "אני"
+//   e.results[1] = "אני עושה"
+//   e.results[2] = "אני עושה ניסיון"  ← each is a superset of the prior
+//
+// Naïve concatenation produces "אני אני עושה אני עושה ניסיון …".
+// This function collapses the list instead:
+//   • If a new final is a word-level expansion of the accumulated text
+//     (its words start with all of the accumulated words), replace the
+//     accumulated text with the longer version.
+//   • If a new final is a strict prefix/subset of the accumulated text,
+//     discard it (older, shorter version already superseded).
+//   • Otherwise apply the same ≥3-word boundary overlap check as
+//     dedupeAppend before appending, so legitimate distinct segments
+//     are appended correctly and 1–2-word legitimate repeats are preserved.
+export function collapseSessionFinals(results) {
+  let collapsed = '';
+  for (let i = 0; i < results.length; i++) {
+    if (!results[i].isFinal) continue;
+    const t = results[i][0].transcript.trim();
+    if (!t) continue;
+
+    if (!collapsed) {
+      collapsed = t + ' ';
+      continue;
+    }
+
+    const cWords = collapsed.trim().split(/\s+/);
+    const nWords = t.split(/\s+/);
+
+    // New result is a superset expansion: every word in collapsed matches the
+    // prefix of the new result — replace with the longer version.
+    if (nWords.length >= cWords.length &&
+        cWords.every((w, i) => w === nWords[i])) {
+      collapsed = t + ' ';
+      continue;
+    }
+
+    // New result is a subset/prefix of collapsed: already have this content.
+    if (nWords.length <= cWords.length &&
+        nWords.every((w, i) => w === cWords[i])) {
+      continue;
+    }
+
+    // Check for word-level boundary overlap (≥ MIN_OVERLAP_WORDS) between the
+    // end of collapsed and the start of the new result — same logic as dedupeAppend.
+    let overlapLen = 0;
+    for (let len = Math.min(cWords.length, nWords.length, 20); len >= MIN_OVERLAP_WORDS; len--) {
+      if (cWords.slice(-len).join(' ') === nWords.slice(0, len).join(' ')) {
+        overlapLen = len;
+        break;
+      }
+    }
+    if (overlapLen >= MIN_OVERLAP_WORDS) {
+      const rest = nWords.slice(overlapLen).join(' ');
+      collapsed = collapsed.trimEnd() + (rest ? ' ' + rest : '') + ' ';
+    } else {
+      // No significant overlap — treat as a new distinct segment.
+      collapsed = collapsed + t + ' ';
+    }
+  }
+  return collapsed;
+}
+
 function _init() {
   if (!SR) { handlers.onError?.('הדפדפן לא תומך בזיהוי דיבור'); return false; }
   const id = ++_sessionId;
   _lastEndError = null;
   _sessionStartTime = Date.now();
-  // Capture the confirmed transcript before this session starts.
-  // onresult rebuilds from e.results and prepends this — never appends to it.
+  // Snapshot of confirmed transcript before this session — never mutated within the session.
   const committedText = state.finalText;
   diagLog('session_start', { id });
   _rec = new SR();
@@ -67,23 +133,22 @@ function _init() {
     _errCount = 0;
     handlers.onResetSilence?.();
 
-    // Rebuild the full session transcript from e.results on every event.
-    // With continuous=true Chrome accumulates results in e.results — treating
-    // it as the authoritative source for this session eliminates within-session
-    // duplication that arose from incremental append + _finalCount tracking.
-    let sessionFinal = '';
+    // Collapse all isFinal results in e.results into a single de-duplicated string.
+    // Chrome Android emits superseding expansions within a session (not distinct
+    // segments), so collapseSessionFinals selects the longest coherent phrase
+    // rather than concatenating every entry.
+    const sessionFinal = collapseSessionFinals(e.results);
+
     let interim = '';
     for (let i = 0; i < e.results.length; i++) {
-      const r = e.results[i];
-      const t = r[0].transcript;
-      if (r.isFinal) sessionFinal += t + ' ';
-      else interim += t;
+      if (!e.results[i].isFinal) interim += e.results[i][0].transcript;
     }
 
-    // Prepend committedText, deduping the boundary to handle Chrome Android's
-    // inter-session text replay. The start of sessionFinal is stable across
-    // calls (Chrome only appends to e.results), so the overlap is detected
-    // consistently — equivalent to checking only on the first result.
+    // Combine with committedText, deduping the inter-session boundary to handle
+    // Chrome Android's session-replay behaviour. committedText is stable for the
+    // duration of this session, and the start of sessionFinal is stable (the
+    // expansion check in collapseSessionFinals only grows the tail), so the
+    // overlap check produces consistent results across successive calls.
     state.finalText = sessionFinal
       ? dedupeAppend(committedText, sessionFinal)
       : committedText;
@@ -98,6 +163,7 @@ function _init() {
         isFinal: e.results[i].isFinal,
         t: e.results[i][0].transcript.slice(0, 40),
       })),
+      collapsedFinal: sessionFinal.trim().slice(0, 80),
       displayLen: (state.finalText + interim).length,
     });
 
