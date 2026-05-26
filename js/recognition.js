@@ -24,8 +24,9 @@ export const handlers = {
   onResetSilence: null, // () => void
   onError: null,        // (msg) => void
   onFatalAbort: null,   // () => void — called on fatal error (mic denied, audio-capture)
-  onSilencePause: null, // () => void — called when auto-paused due to sustained silence
-  onVADResume: null,    // () => void — called when VAD detects voice; caller should resumeRecognition()
+  onSilencePause: null,    // () => void — called when auto-paused due to sustained silence
+  onVADResume: null,       // () => void — called when VAD detects voice; caller should resumeRecognition()
+  onVADInitFailed: null,   // () => void — VAD init failed while paused; SR resumes with beep fallback
 };
 
 let _rec = null;
@@ -41,6 +42,7 @@ let _vadStream = null;
 let _vadContext = null;
 let _vadAnalyser = null;
 let _vadTimer = null;
+let _resumePending = false;    // true while async VAD release + SR restart is in progress
 
 export function isSupported() { return !!SR; }
 
@@ -180,6 +182,7 @@ function _trailingPunct(results, sessionFinal) {
 
 async function _initVAD() {
   if (_vadContext) return; // already set up
+  diagLog('vad_init_start');
   try {
     _vadStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     _vadContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -187,10 +190,10 @@ async function _initVAD() {
     _vadAnalyser = _vadContext.createAnalyser();
     _vadAnalyser.fftSize = 512;
     source.connect(_vadAnalyser);
-    diagLog('vad_init', { ok: true });
+    diagLog('vad_init_ok');
   } catch (e) {
     _vadStream = null; _vadContext = null; _vadAnalyser = null;
-    diagLog('vad_init', { ok: false, error: String(e) });
+    diagLog('vad_init_failed', { error: String(e) });
   }
 }
 
@@ -204,7 +207,7 @@ function _startVAD() {
     const rms = Math.sqrt(buf.reduce((s, v) => s + v * v, 0) / buf.length);
     if (rms > VAD_THRESHOLD) {
       if (++hitCount >= VAD_HIT_COUNT) {
-        diagLog('vad_resume', { rms: +rms.toFixed(4) });
+        diagLog('vad_voice_detected', { rms: +rms.toFixed(4) });
         _stopVAD();
         handlers.onVADResume?.();
       }
@@ -219,13 +222,16 @@ function _stopVAD() {
   if (_vadTimer) { clearInterval(_vadTimer); _vadTimer = null; }
 }
 
-function _releaseVAD() {
+async function _releaseVAD() {
+  const hadResources = !!(_vadStream || _vadContext);
+  if (hadResources) diagLog('vad_release_start');
   _stopVAD();
   try { _vadStream?.getTracks().forEach(t => t.stop()); } catch {}
   _vadStream = null;
-  try { _vadContext?.close(); } catch {}
+  try { if (_vadContext) await _vadContext.close(); } catch {}
   _vadContext = null;
   _vadAnalyser = null;
+  if (hadResources) diagLog('vad_release_complete');
 }
 
 // ─── RECOGNITION SESSION ─────────────────────────────────────────────────────
@@ -366,7 +372,13 @@ function _init() {
         _startVAD();
       } else {
         _initVAD().then(() => {
-          if (state.isRecording && state.isPaused) _startVAD();
+          if (!state.isRecording || !state.isPaused) return;
+          if (_vadAnalyser) {
+            _startVAD();
+          } else {
+            diagLog('vad_init_failed_in_pause');
+            handlers.onVADInitFailed?.();
+          }
         });
       }
       return;
@@ -392,9 +404,10 @@ function _kill() {
   state.isRecording = false;
   state.isPaused = false;
   _restartPending = false;
+  _resumePending = false;
   _silentStreak = 0;
   try { _rec?.stop(); _rec = null; } catch {}
-  _releaseVAD();
+  _releaseVAD(); // async fire-and-forget: SR not restarting, brief delay is fine
   handlers.onFatalAbort?.();
 }
 
@@ -436,9 +449,10 @@ export function stopRecognition() {
   state.isRecording = false;
   state.isPaused = false;
   _restartPending = false;
+  _resumePending = false;
   _silentStreak = 0;
   try { _rec?.stop(); _rec = null; } catch {}
-  _releaseVAD();
+  _releaseVAD(); // async fire-and-forget: SR not restarting, brief delay is fine
 }
 
 // Promote arbitrary text to rec.finalText — call before pause or resume so
@@ -454,10 +468,14 @@ export function pauseRecognition() {
   try { _rec?.stop(); } catch {}
 }
 
-export function resumeRecognition() {
-  if (!state.isRecording || !state.isPaused) return;
-  state.isPaused = false;
-  _silentStreak = 0; // fresh streak after any resume (user-initiated or VAD)
-  _stopVAD();
+export async function resumeRecognition() {
+  if (!state.isRecording || !state.isPaused || _resumePending) return;
+  _resumePending = true;
+  const wasVAD = !!(_vadStream || _vadContext || _vadTimer);
+  await _releaseVAD();           // fully release mic stream before SR starts
+  state.isPaused = false;        // only after release is complete
+  _silentStreak = 0;
+  _resumePending = false;
+  if (wasVAD) diagLog('sr_resume_after_vad');
   _restart();
 }
