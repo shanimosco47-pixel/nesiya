@@ -5,6 +5,9 @@ import {
 
 import { diagLog, copyDiagLog, formatDiagLog, clearDiagLog } from './diagnostics.js';
 
+const BUILD_VERSION = 'v18';
+diagLog('app_loaded', { build: BUILD_VERSION });
+
 import {
   state as rec, handlers as recHandlers,
   startRecognition, stopRecognition, pauseRecognition, resumeRecognition,
@@ -124,7 +127,7 @@ async function beginRecording(existingText) {
   _draftWarnSent = false;
   els.btnStart.style.display = 'none';
   els.btnContinue.style.display = 'none';
-  if (!startRecognition(existingText)) { showIdleUI(); return; }
+  if (!await startRecognition(existingText)) { showIdleUI(); return; }
   _recordingStart = new Date();
   showRecordingUI();
   els.statusText.textContent = 'מקליט • ' + _recordingStart.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
@@ -134,7 +137,7 @@ async function beginRecording(existingText) {
   acquireWakeLock();
 }
 
-function pause() {
+async function pause() {
   if (!rec.isRecording) return;
   if (!rec.isPaused) {
     diagLog('record_pause');
@@ -145,7 +148,8 @@ function pause() {
     releaseWakeLock();
   } else {
     diagLog('record_resume');
-    resumeRecognition();
+    const resumed = await resumeRecognition();
+    if (!resumed) return;
     showRecordingUI();
     if (_recordingStart) {
       els.statusText.textContent = 'מקליט • ' + _recordingStart.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
@@ -217,9 +221,10 @@ recHandlers.onSilencePause = () => {
   els.statusText.textContent = 'ממתין לדיבור...';
 };
 
-// VAD detected voice — resume SR and restore recording UI.
-recHandlers.onVADResume = () => {
-  resumeRecognition();
+// VAD detected voice — fully release VAD mic, then resume SR and restore recording UI.
+recHandlers.onVADResume = async () => {
+  const resumed = await resumeRecognition();
+  if (!resumed) return;
   showRecordingUI();
   if (_recordingStart) {
     els.statusText.textContent = 'מקליט • ' + _recordingStart.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
@@ -227,6 +232,32 @@ recHandlers.onVADResume = () => {
   resetSilenceTimer();
   startSilenceBar(SILENCE_DURATION);
   acquireWakeLock();
+};
+
+// VAD init failed while paused — fall back to SR restart loop (beeps return, but transcription works).
+recHandlers.onVADInitFailed = async () => {
+  showToast('זיהוי קול נכשל — ממשיך הקלטה');
+  const resumed = await resumeRecognition();
+  if (!resumed) return;
+  showRecordingUI();
+  if (_recordingStart) {
+    els.statusText.textContent = 'מקליט • ' + _recordingStart.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  }
+  resetSilenceTimer();
+  startSilenceBar(SILENCE_DURATION);
+  acquireWakeLock();
+};
+
+// VAD init timed out — getUserMedia never resolved; stop everything, show idle UI, ask user to reload.
+recHandlers.onVADInitTimeout = () => {
+  stopRecognition();
+  releaseWakeLock();
+  clearSilenceTimer();
+  stopSilenceBar();
+  showIdleUI();
+  showToast('גישה למיקרופון מתעכבת — יש לרענן את האפליקציה ולהתחיל מחדש');
+  const text = els.transcript.value.trim();
+  if (text) saveDraft({ finalText: text, interimText: '', activeSessionId });
 };
 
 // ─── VISIBILITY CHANGE ────────────────────────────────────────────────────────
@@ -258,13 +289,14 @@ document.addEventListener('visibilitychange', () => {
     return;
   }
   if (document.visibilityState === 'visible' && rec.isRecording && rec.isPaused) {
-    setTimeout(() => {
+    setTimeout(async () => {
       if (rec.isRecording && rec.isPaused) {
         // Re-sync before restarting recognition — textarea remains source of truth
         // even if some state drifted while the page was in the background.
         _syncRecognitionState();
         diagLog('visibility_show', { finalTextLen: rec.finalText.length });
-        resumeRecognition();
+        const resumed = await resumeRecognition();
+        if (!resumed) return;
         showRecordingUI();
         els.statusText.textContent = 'מקליט • ' + (_recordingStart ? _recordingStart.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) : '');
         resetSilenceTimer();
@@ -463,7 +495,8 @@ if ('serviceWorker' in navigator) {
   if (el && d && !isNaN(d)) {
     el.textContent = 'עודכן ' +
       d.toLocaleDateString('he-IL', { day: '2-digit', month: '2-digit', year: 'numeric' }) +
-      ' · ' + d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+      ' · ' + d.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' }) +
+      ' · ' + BUILD_VERSION;
   }
 })();
 

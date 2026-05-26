@@ -24,8 +24,10 @@ export const handlers = {
   onResetSilence: null, // () => void
   onError: null,        // (msg) => void
   onFatalAbort: null,   // () => void — called on fatal error (mic denied, audio-capture)
-  onSilencePause: null, // () => void — called when auto-paused due to sustained silence
-  onVADResume: null,    // () => void — called when VAD detects voice; caller should resumeRecognition()
+  onSilencePause: null,    // () => void — called when auto-paused due to sustained silence
+  onVADResume: null,       // () => void — called when VAD detects voice; caller should resumeRecognition()
+  onVADInitFailed: null,   // () => void — VAD init failed while paused; SR resumes with beep fallback
+  onVADInitTimeout: null,  // () => void — pending VAD init blocked resume/start too long
 };
 
 let _rec = null;
@@ -41,6 +43,14 @@ let _vadStream = null;
 let _vadContext = null;
 let _vadAnalyser = null;
 let _vadTimer = null;
+let _transitionGeneration = 0;   // incremented by resume/stop to cancel all pending async ops
+let _vadInitPromise = null;       // single-flight guard: at most one _initVAD in progress
+let _vadInitGeneration = -1;      // generation of _vadInitPromise; stale promise never reused
+let _resumePending = false;       // true while async VAD release + SR restart is in progress
+let _startPending = false;        // true while async startRecognition is in progress
+let _getUserMediaOverride = null; // test injection only; null in production
+let _SROverride = null;           // test injection only; null in production
+let _vadInitTimeoutMs = 5000;     // ms to wait for pending VAD init before declaring timeout
 
 export function isSupported() { return !!SR; }
 
@@ -179,19 +189,67 @@ function _trailingPunct(results, sessionFinal) {
 // ─── VAD HELPERS ─────────────────────────────────────────────────────────────
 
 async function _initVAD() {
-  if (_vadContext) return; // already set up
+  if (_vadContext) return;
+  const gen = _transitionGeneration;
+  diagLog('vad_init_start');
+  let localStream = null;
+  let localContext = null;
   try {
-    _vadStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    _vadContext = new (window.AudioContext || window.webkitAudioContext)();
-    const source = _vadContext.createMediaStreamSource(_vadStream);
-    _vadAnalyser = _vadContext.createAnalyser();
-    _vadAnalyser.fftSize = 512;
-    source.connect(_vadAnalyser);
-    diagLog('vad_init', { ok: true });
+    const gum = _getUserMediaOverride
+      ?? navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    localStream = await gum({ audio: true, video: false });
+
+    if (_transitionGeneration !== gen || !state.isRecording || !state.isPaused || _vadContext) {
+      localStream.getTracks().forEach(t => { try { t.stop(); } catch {} });
+      if (_transitionGeneration !== gen) diagLog('vad_init_superseded');
+      return;
+    }
+
+    localContext = new (window.AudioContext || window.webkitAudioContext)();
+    const localAnalyser = localContext.createAnalyser();
+    localContext.createMediaStreamSource(localStream).connect(localAnalyser);
+    localAnalyser.fftSize = 512;
+
+    if (_transitionGeneration !== gen || !state.isRecording || !state.isPaused) {
+      localStream.getTracks().forEach(t => { try { t.stop(); } catch {} });
+      try { await localContext.close(); } catch {}
+      diagLog('vad_init_superseded');
+      return;
+    }
+
+    _vadStream = localStream;
+    _vadContext = localContext;
+    _vadAnalyser = localAnalyser;
+    diagLog('vad_init_ok');
   } catch (e) {
-    _vadStream = null; _vadContext = null; _vadAnalyser = null;
-    diagLog('vad_init', { ok: false, error: String(e) });
+    if (localStream) localStream.getTracks().forEach(t => { try { t.stop(); } catch {} });
+    if (localContext) { try { await localContext.close(); } catch {} }
+    if (_transitionGeneration !== gen) return;
+    diagLog('vad_init_failed', { error: String(e) });
   }
+}
+
+function _ensureVADInitialized() {
+  if (_vadInitPromise && _vadInitGeneration === _transitionGeneration) return _vadInitPromise;
+  const gen = _transitionGeneration;
+  _vadInitGeneration = gen;
+  _vadInitPromise = _initVAD().finally(() => {
+    if (_vadInitGeneration === gen) { _vadInitPromise = null; _vadInitGeneration = -1; }
+  });
+  return _vadInitPromise;
+}
+
+async function _waitForVADInit() {
+  if (!_vadInitPromise) return true;
+  const settled = await Promise.race([
+    _vadInitPromise.then(() => true),
+    new Promise(resolve => setTimeout(() => resolve(false), _vadInitTimeoutMs)),
+  ]);
+  if (!settled) {
+    diagLog('vad_init_timeout');
+    handlers.onVADInitTimeout?.();
+  }
+  return settled;
 }
 
 function _startVAD() {
@@ -204,7 +262,7 @@ function _startVAD() {
     const rms = Math.sqrt(buf.reduce((s, v) => s + v * v, 0) / buf.length);
     if (rms > VAD_THRESHOLD) {
       if (++hitCount >= VAD_HIT_COUNT) {
-        diagLog('vad_resume', { rms: +rms.toFixed(4) });
+        diagLog('vad_voice_detected', { rms: +rms.toFixed(4) });
         _stopVAD();
         handlers.onVADResume?.();
       }
@@ -219,19 +277,23 @@ function _stopVAD() {
   if (_vadTimer) { clearInterval(_vadTimer); _vadTimer = null; }
 }
 
-function _releaseVAD() {
+async function _releaseVAD() {
+  const hadResources = !!(_vadStream || _vadContext);
+  if (hadResources) diagLog('vad_release_start');
   _stopVAD();
   try { _vadStream?.getTracks().forEach(t => t.stop()); } catch {}
   _vadStream = null;
-  try { _vadContext?.close(); } catch {}
+  try { if (_vadContext) await _vadContext.close(); } catch {}
   _vadContext = null;
   _vadAnalyser = null;
+  if (hadResources) diagLog('vad_release_complete');
 }
 
 // ─── RECOGNITION SESSION ─────────────────────────────────────────────────────
 
 function _init() {
-  if (!SR) { handlers.onError?.('הדפדפן לא תומך בזיהוי דיבור'); return false; }
+  const SR_ = _SROverride || SR;
+  if (!SR_) { handlers.onError?.('הדפדפן לא תומך בזיהוי דיבור'); return false; }
   const id = ++_sessionId;
   _lastEndError = null;
   _sessionStartTime = Date.now();
@@ -239,7 +301,7 @@ function _init() {
   // Snapshot of confirmed transcript before this session — never mutated within the session.
   const committedText = state.finalText;
   diagLog('session_start', { id });
-  _rec = new SR();
+  _rec = new SR_();
   _rec.lang = 'he-IL';
   _rec.continuous = true;
   _rec.interimResults = true;
@@ -365,8 +427,11 @@ function _init() {
       if (_vadAnalyser) {
         _startVAD();
       } else {
-        _initVAD().then(() => {
-          if (state.isRecording && state.isPaused) _startVAD();
+        const initGen = _transitionGeneration;
+        _ensureVADInitialized().then(() => {
+          if (_transitionGeneration !== initGen || !state.isRecording || !state.isPaused) return;
+          if (_vadAnalyser) { _startVAD(); }
+          else { diagLog('vad_init_failed_in_pause'); handlers.onVADInitFailed?.(); }
         });
       }
       return;
@@ -389,6 +454,9 @@ function _init() {
 }
 
 function _kill() {
+  _transitionGeneration++;
+  _resumePending = false;
+  _startPending = false;
   state.isRecording = false;
   state.isPaused = false;
   _restartPending = false;
@@ -400,9 +468,10 @@ function _kill() {
 
 function _restart() {
   diagLog('restart_exec');
-  if (!_init()) return;
+  if (!_init()) return false;
   try {
     _rec.start();
+    return true;
   } catch (e) {
     console.warn('[recognition] start failed, retry in 500 ms');
     setTimeout(() => {
@@ -410,29 +479,47 @@ function _restart() {
         try { _rec.start(); } catch (e2) { console.error('[recognition] retry failed', e2); }
       }
     }, 500);
+    return false;
   }
 }
 
-export function startRecognition(existingText = '') {
-  state.finalText = existingText;
-  state.sessionFinalText = '';
-  state.isRecording = true;
-  state.isPaused = false;
-  _restartPending = false;
-  _errCount = 0;
-  _silentStreak = 0;
-  if (!_init()) { state.isRecording = false; return false; }
+export async function startRecognition(existingText = '') {
+  if (_startPending) return false;
+  _startPending = true;
+  const myGen = ++_transitionGeneration;
   try {
-    _rec.start();
-  } catch (e) {
-    console.error('[recognition] initial start failed', e);
-    state.isRecording = false;
-    return false;
+    if (_vadInitPromise) {
+      const settled = await _waitForVADInit();
+      if (!settled) return false;
+    }
+    await _releaseVAD();
+    // Re-check after awaits: stop() or another start() may have superseded this call.
+    if (_transitionGeneration !== myGen) return false;
+    state.finalText = existingText;
+    state.sessionFinalText = '';
+    state.isRecording = true;
+    state.isPaused = false;
+    _restartPending = false;
+    _errCount = 0;
+    _silentStreak = 0;
+    if (!_init()) { state.isRecording = false; return false; }
+    try {
+      _rec.start();
+      return true;
+    } catch (e) {
+      console.error('[recognition] initial start failed', e);
+      state.isRecording = false;
+      return false;
+    }
+  } finally {
+    if (_transitionGeneration === myGen) _startPending = false;
   }
-  return true;
 }
 
 export function stopRecognition() {
+  _transitionGeneration++;
+  _resumePending = false;
+  _startPending = false;
   state.isRecording = false;
   state.isPaused = false;
   _restartPending = false;
@@ -454,10 +541,53 @@ export function pauseRecognition() {
   try { _rec?.stop(); } catch {}
 }
 
-export function resumeRecognition() {
-  if (!state.isRecording || !state.isPaused) return;
-  state.isPaused = false;
-  _silentStreak = 0; // fresh streak after any resume (user-initiated or VAD)
-  _stopVAD();
-  _restart();
+export async function resumeRecognition() {
+  if (!state.isRecording || !state.isPaused || _resumePending) return false;
+  _resumePending = true;
+  const myGen = ++_transitionGeneration;
+  const wasVAD = !!(_vadStream || _vadContext || _vadTimer);
+  try {
+    if (_vadInitPromise) {
+      const settled = await _waitForVADInit();
+      if (!settled) return false;
+    }
+    await _releaseVAD();
+    if (!state.isRecording || _transitionGeneration !== myGen) {
+      diagLog('resume_aborted', { reason: !state.isRecording ? 'stopped' : 'superseded' });
+      return false;
+    }
+    state.isPaused = false;
+    _silentStreak = 0;
+    if (wasVAD) diagLog('sr_resume_after_vad');
+    return _restart();
+  } finally {
+    if (_transitionGeneration === myGen) _resumePending = false;
+  }
 }
+
+export const _forTesting = {
+  reset() {
+    _resumePending = false; _startPending = false; _transitionGeneration = 0; _vadInitPromise = null;
+    _vadInitGeneration = -1; _getUserMediaOverride = null; _SROverride = null;
+    _vadStream = null; _vadContext = null; _vadAnalyser = null; _vadTimer = null;
+    _restartPending = false; _errCount = 0; _silentStreak = 0;
+    _sessionHadSpeech = false; _lastEndError = null; _sessionStartTime = 0; _rec = null;
+    state.isRecording = false; state.isPaused = false;
+    state.finalText = ''; state.sessionFinalText = '';
+  },
+  getInternalState() {
+    return { vadStream: _vadStream, vadContext: _vadContext, vadAnalyser: _vadAnalyser,
+             vadTimer: _vadTimer, resumePending: _resumePending, startPending: _startPending,
+             transitionGeneration: _transitionGeneration };
+  },
+  ensureVADInitialized: () => _ensureVADInitialized(),
+  setVADResources(stream, context, analyser) {
+    _vadStream = stream; _vadContext = context; _vadAnalyser = analyser;
+  },
+  setGetUserMedia(fn)     { _getUserMediaOverride = fn; },
+  clearGetUserMedia()     { _getUserMediaOverride = null; },
+  setSR(mock)             { _SROverride = mock; },
+  clearSR()               { _SROverride = null; },
+  setVADInitTimeoutMs(ms) { _vadInitTimeoutMs = ms; },
+  resetVADInitTimeoutMs() { _vadInitTimeoutMs = 5000; },
+};
