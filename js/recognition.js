@@ -355,12 +355,20 @@ function _init() {
     // restart loop and hand off to the AudioContext VAD, which monitors amplitude
     // silently (no beeps). When voice is detected, onVADResume fires so app.js
     // can call resumeRecognition() — one beep as the user starts speaking.
-    if (_silentStreak >= SILENT_STREAK_LIMIT && _vadAnalyser) {
+    if (_silentStreak >= SILENT_STREAK_LIMIT) {
       diagLog('vad_auto_pause', { streak: _silentStreak });
       _silentStreak = 0;
       state.isPaused = true;
-      _startVAD();
       handlers.onSilencePause?.();
+      // Initialize VAD only now (first time it's needed) to avoid holding a
+      // simultaneous getUserMedia stream alongside SR during active recording.
+      if (_vadAnalyser) {
+        _startVAD();
+      } else {
+        _initVAD().then(() => {
+          if (state.isRecording && state.isPaused) _startVAD();
+        });
+      }
       return;
     }
 
@@ -413,7 +421,6 @@ export function startRecognition(existingText = '') {
   _restartPending = false;
   _errCount = 0;
   _silentStreak = 0;
-  _initVAD(); // fire-and-forget; sets up AudioContext for silence detection
   if (!_init()) { state.isRecording = false; return false; }
   try {
     _rec.start();
