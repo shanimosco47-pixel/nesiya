@@ -207,6 +207,28 @@ recHandlers.onFatalAbort = () => {
   showIdleUI();
 };
 
+// Auto-paused due to sustained silence — VAD is now monitoring.
+// Show paused state so the user knows recording is waiting for their voice.
+recHandlers.onSilencePause = () => {
+  clearSilenceTimer();
+  stopSilenceBar();
+  releaseWakeLock();
+  showPausedUI();
+  els.statusText.textContent = 'ממתין לדיבור...';
+};
+
+// VAD detected voice — resume SR and restore recording UI.
+recHandlers.onVADResume = () => {
+  resumeRecognition();
+  showRecordingUI();
+  if (_recordingStart) {
+    els.statusText.textContent = 'מקליט • ' + _recordingStart.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' });
+  }
+  resetSilenceTimer();
+  startSilenceBar(SILENCE_DURATION);
+  acquireWakeLock();
+};
+
 // ─── VISIBILITY CHANGE ────────────────────────────────────────────────────────
 
 // Promote textarea value → rec.finalText before pause or resume.

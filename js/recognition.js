@@ -2,6 +2,10 @@ import { diagLog } from './diagnostics.js';
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const MAX_CONSECUTIVE_ERRORS = 5;
+const SILENT_STREAK_LIMIT = 3; // consecutive sessions with no speech → auto-pause + VAD
+const VAD_THRESHOLD = 0.01;    // RMS amplitude threshold for voice detection
+const VAD_POLL_MS = 200;       // AudioContext polling interval (ms)
+const VAD_HIT_COUNT = 3;       // consecutive hits above threshold to trigger resume (600ms)
 
 // Diagnostic-only state — not used for any behavioral decisions.
 let _sessionStartTime = 0;
@@ -20,12 +24,23 @@ export const handlers = {
   onResetSilence: null, // () => void
   onError: null,        // (msg) => void
   onFatalAbort: null,   // () => void — called on fatal error (mic denied, audio-capture)
+  onSilencePause: null, // () => void — called when auto-paused due to sustained silence
+  onVADResume: null,    // () => void — called when VAD detects voice; caller should resumeRecognition()
 };
 
 let _rec = null;
 let _restartPending = false;
 let _sessionId = 0;
 let _errCount = 0;
+let _sessionHadSpeech = false; // true if current session produced any real transcript
+let _silentStreak = 0;         // consecutive sessions with no speech
+
+// AudioContext voice-activity detection (VAD) — runs silently when SR is paused,
+// auto-resumes when voice is detected. Eliminates beeping during silence.
+let _vadStream = null;
+let _vadContext = null;
+let _vadAnalyser = null;
+let _vadTimer = null;
 
 export function isSupported() { return !!SR; }
 
@@ -75,6 +90,10 @@ const _norm = (s) => s.normalize('NFC').replace(/[^\p{L}\p{N}\s]/gu, '');
 //
 // All comparisons use _norm() to handle invisible Unicode chars in Chrome
 // Android Hebrew transcripts that make === fail on visually identical strings.
+//
+// Punctuation and newline voice commands (e.g. saying "נקודה" → Chrome emits ".")
+// are handled separately in the onresult handler after this function returns,
+// to avoid appending spurious punctuation from noise-only sessions.
 export function collapseSessionFinals(results) {
   let collapsed = '';
   let collapsedNorm = '';
@@ -83,9 +102,9 @@ export function collapseSessionFinals(results) {
     const t = results[i][0].transcript.trim();
     if (!t) continue;
     const tNorm = _norm(t);
-    if (!tNorm) continue;
+    if (!tNorm) continue; // skip punctuation-only slots in this pass
 
-    if (!collapsed) {
+    if (!collapsedNorm) {
       collapsed = t + ' ';
       collapsedNorm = tNorm;
       continue;
@@ -134,11 +153,89 @@ export function collapseSessionFinals(results) {
   return collapsed;
 }
 
+// Return a trailing punctuation or newline suffix from the last isFinal result,
+// but only when the session has real word content (sessionFinal non-empty) — this
+// prevents Chrome's spurious "." or "\n" noise results in silent sessions from
+// corrupting the transcript.
+function _trailingPunct(results, sessionFinal) {
+  if (!sessionFinal.trim()) return '';
+  for (let i = results.length - 1; i >= 0; i--) {
+    if (!results[i].isFinal) continue;
+    const raw = results[i][0].transcript;
+    const t = raw.trim();
+    if (!t) {
+      // Whitespace-only (e.g. "\n" newline command)
+      return (raw && !sessionFinal.endsWith(raw)) ? raw : '';
+    }
+    if (!_norm(t)) {
+      // Punctuation-only (e.g. "." period command)
+      return !sessionFinal.trimEnd().endsWith(t) ? t : '';
+    }
+    break; // last isFinal was a word result — no trailing punctuation
+  }
+  return '';
+}
+
+// ─── VAD HELPERS ─────────────────────────────────────────────────────────────
+
+async function _initVAD() {
+  if (_vadContext) return; // already set up
+  try {
+    _vadStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    _vadContext = new (window.AudioContext || window.webkitAudioContext)();
+    const source = _vadContext.createMediaStreamSource(_vadStream);
+    _vadAnalyser = _vadContext.createAnalyser();
+    _vadAnalyser.fftSize = 512;
+    source.connect(_vadAnalyser);
+    diagLog('vad_init', { ok: true });
+  } catch (e) {
+    _vadStream = null; _vadContext = null; _vadAnalyser = null;
+    diagLog('vad_init', { ok: false, error: String(e) });
+  }
+}
+
+function _startVAD() {
+  if (!_vadAnalyser || _vadTimer) return;
+  const buf = new Float32Array(_vadAnalyser.fftSize);
+  let hitCount = 0;
+  _vadTimer = setInterval(() => {
+    if (_vadContext.state === 'suspended') { _vadContext.resume(); return; }
+    _vadAnalyser.getFloatTimeDomainData(buf);
+    const rms = Math.sqrt(buf.reduce((s, v) => s + v * v, 0) / buf.length);
+    if (rms > VAD_THRESHOLD) {
+      if (++hitCount >= VAD_HIT_COUNT) {
+        diagLog('vad_resume', { rms: +rms.toFixed(4) });
+        _stopVAD();
+        handlers.onVADResume?.();
+      }
+    } else {
+      hitCount = 0;
+    }
+  }, VAD_POLL_MS);
+  diagLog('vad_started');
+}
+
+function _stopVAD() {
+  if (_vadTimer) { clearInterval(_vadTimer); _vadTimer = null; }
+}
+
+function _releaseVAD() {
+  _stopVAD();
+  try { _vadStream?.getTracks().forEach(t => t.stop()); } catch {}
+  _vadStream = null;
+  try { _vadContext?.close(); } catch {}
+  _vadContext = null;
+  _vadAnalyser = null;
+}
+
+// ─── RECOGNITION SESSION ─────────────────────────────────────────────────────
+
 function _init() {
   if (!SR) { handlers.onError?.('הדפדפן לא תומך בזיהוי דיבור'); return false; }
   const id = ++_sessionId;
   _lastEndError = null;
   _sessionStartTime = Date.now();
+  _sessionHadSpeech = false;
   // Snapshot of confirmed transcript before this session — never mutated within the session.
   const committedText = state.finalText;
   diagLog('session_start', { id });
@@ -153,11 +250,18 @@ function _init() {
     _errCount = 0;
     handlers.onResetSilence?.();
 
-    // Collapse all isFinal results in e.results into a single de-duplicated string.
-    // Chrome Android emits superseding expansions within a session (not distinct
-    // segments), so collapseSessionFinals selects the longest coherent phrase
-    // rather than concatenating every entry.
+    // Collapse all isFinal word results into a single de-duplicated string.
     const sessionFinal = collapseSessionFinals(e.results);
+
+    // Append trailing punctuation/newline voice command from the last isFinal slot,
+    // but only when the session has real words — prevents spurious punctuation from
+    // Chrome's noise-only sessions (silent sessions where Chrome emits "." or "\n").
+    const punct = _trailingPunct(e.results, sessionFinal);
+    const sessionFinalWithPunct = punct
+      ? sessionFinal.trimEnd() + punct + ' '
+      : sessionFinal;
+
+    if (sessionFinalWithPunct.trim()) _sessionHadSpeech = true;
 
     let interim = '';
     for (let i = 0; i < e.results.length; i++) {
@@ -165,14 +269,11 @@ function _init() {
     }
 
     // Combine with committedText, deduping the inter-session boundary to handle
-    // Chrome Android's session-replay behaviour. committedText is stable for the
-    // duration of this session, and the start of sessionFinal is stable (the
-    // expansion check in collapseSessionFinals only grows the tail), so the
-    // overlap check produces consistent results across successive calls.
-    state.finalText = sessionFinal
-      ? dedupeAppend(committedText, sessionFinal)
+    // Chrome Android's session-replay behaviour.
+    state.finalText = sessionFinalWithPunct
+      ? dedupeAppend(committedText, sessionFinalWithPunct)
       : committedText;
-    state.sessionFinalText = sessionFinal;
+    state.sessionFinalText = sessionFinalWithPunct;
 
     diagLog('result', {
       id,
@@ -183,7 +284,7 @@ function _init() {
         isFinal: e.results[i].isFinal,
         t: e.results[i][0].transcript.slice(0, 40),
       })),
-      collapsedFinal: sessionFinal.trim().slice(0, 80),
+      collapsedFinal: sessionFinalWithPunct.trim().slice(0, 80),
       displayLen: (state.finalText + interim).length,
     });
 
@@ -192,7 +293,7 @@ function _init() {
 
   _rec.onerror = (e) => {
     if (_sessionId !== id) return;
-    _lastEndError = e.error; // capture for onend diagnostic before it clears
+    _lastEndError = e.error;
     console.log('[recognition] error:', e.error, '(session', id, ')');
     diagLog('error', { id, error: e.error });
     if (e.error === 'no-speech') return;
@@ -223,9 +324,14 @@ function _init() {
   _rec.onend = () => {
     if (_sessionId !== id) return;
     const endError = _lastEndError;
+    const hadSpeech = _sessionHadSpeech;
+    _sessionHadSpeech = false;
+
     diagLog('recognition_end', {
       id,
       endError,
+      hadSpeech,
+      silentStreak: _silentStreak,
       isRecording: state.isRecording,
       isPaused: state.isPaused,
       restartPending: _restartPending,
@@ -236,6 +342,25 @@ function _init() {
       diagLog('restart_skipped', {
         reason: !state.isRecording ? 'stopped' : state.isPaused ? 'paused' : 'already_pending',
       });
+      return;
+    }
+
+    if (hadSpeech) {
+      _silentStreak = 0;
+    } else {
+      _silentStreak++;
+    }
+
+    // After SILENT_STREAK_LIMIT consecutive sessions with no speech, stop the
+    // restart loop and hand off to the AudioContext VAD, which monitors amplitude
+    // silently (no beeps). When voice is detected, onVADResume fires so app.js
+    // can call resumeRecognition() — one beep as the user starts speaking.
+    if (_silentStreak >= SILENT_STREAK_LIMIT && _vadAnalyser) {
+      diagLog('vad_auto_pause', { streak: _silentStreak });
+      _silentStreak = 0;
+      state.isPaused = true;
+      _startVAD();
+      handlers.onSilencePause?.();
       return;
     }
 
@@ -259,7 +384,9 @@ function _kill() {
   state.isRecording = false;
   state.isPaused = false;
   _restartPending = false;
+  _silentStreak = 0;
   try { _rec?.stop(); _rec = null; } catch {}
+  _releaseVAD();
   handlers.onFatalAbort?.();
 }
 
@@ -285,6 +412,8 @@ export function startRecognition(existingText = '') {
   state.isPaused = false;
   _restartPending = false;
   _errCount = 0;
+  _silentStreak = 0;
+  _initVAD(); // fire-and-forget; sets up AudioContext for silence detection
   if (!_init()) { state.isRecording = false; return false; }
   try {
     _rec.start();
@@ -300,7 +429,9 @@ export function stopRecognition() {
   state.isRecording = false;
   state.isPaused = false;
   _restartPending = false;
+  _silentStreak = 0;
   try { _rec?.stop(); _rec = null; } catch {}
+  _releaseVAD();
 }
 
 // Promote arbitrary text to rec.finalText — call before pause or resume so
@@ -312,11 +443,14 @@ export function promoteFinalText(text) {
 export function pauseRecognition() {
   if (!state.isRecording || state.isPaused) return;
   state.isPaused = true;
+  _stopVAD();
   try { _rec?.stop(); } catch {}
 }
 
 export function resumeRecognition() {
   if (!state.isRecording || !state.isPaused) return;
   state.isPaused = false;
+  _silentStreak = 0; // fresh streak after any resume (user-initiated or VAD)
+  _stopVAD();
   _restart();
 }
