@@ -52,7 +52,7 @@ export function dedupeAppend(existing, addition) {
 // controls (U+202A–U+202E), BOM (U+FEFF), and zero-width chars (U+200B–U+200D)
 // in Hebrew transcripts. These are invisible in logs but cause === to return
 // false even on visually identical strings.
-const _norm = (s) => s.normalize('NFC').replace(/[‎‏‪-‮﻿​-‍]/g, '');
+const _norm = (s) => s.normalize('NFC').replace(/[^\p{L}\p{N}\s]/gu, '');
 
 // Collapse a SpeechRecognitionResultList into a single de-duplicated string.
 //
