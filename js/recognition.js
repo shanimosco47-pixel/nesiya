@@ -212,7 +212,7 @@ async function _initVAD() {
 
     if (_transitionGeneration !== gen || !state.isRecording || !state.isPaused) {
       localStream.getTracks().forEach(t => { try { t.stop(); } catch {} });
-      try { localContext.close(); } catch {}
+      try { await localContext.close(); } catch {}
       diagLog('vad_init_superseded');
       return;
     }
@@ -223,7 +223,7 @@ async function _initVAD() {
     diagLog('vad_init_ok');
   } catch (e) {
     if (localStream) localStream.getTracks().forEach(t => { try { t.stop(); } catch {} });
-    if (localContext) { try { localContext.close(); } catch {} }
+    if (localContext) { try { await localContext.close(); } catch {} }
     if (_transitionGeneration !== gen) return;
     diagLog('vad_init_failed', { error: String(e) });
   }
