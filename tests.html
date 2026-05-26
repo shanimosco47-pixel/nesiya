@@ -800,6 +800,46 @@ section('VAD async race conditions');
   _forTesting.clearGetUserMedia(); _forTesting.clearSR(); _forTesting.resetVADInitTimeoutMs();
 }
 
+// Test 9 — Pending VAD init → startRecognition → stopRecognition → SR never starts
+{
+  _forTesting.reset();
+  recState.isRecording = true; recState.isPaused = true;
+  let resolveGUM9, trackStopped9 = false, startCalled9 = false;
+  _forTesting.setGetUserMedia(() => new Promise(r => resolveGUM9 = r));
+  _forTesting.setSR(makeMockSR(() => startCalled9 = true));
+
+  const initP9 = _forTesting.ensureVADInitialized();  // old GUM pending (gen=0)
+  const startP9 = startRecognition('');               // gen++ → 1; myGen=1; waits for initP9
+  assertFalsy('T9: SR not called while GUM pending', startCalled9);
+  stopRecognition();                                   // gen++ → 2; _startPending=false
+  resolveGUM9({ getTracks: () => [{ stop() { trackStopped9 = true; } }] });
+  const [, startResult9] = await Promise.all([initP9, startP9]);
+  assert('T9: startRecognition returns false when stopped during wait', startResult9, false);
+  assertFalsy('T9: SR.start never called', startCalled9);
+  assertTruthy('T9: stale VAD track stopped', trackStopped9);
+  _forTesting.clearGetUserMedia(); _forTesting.clearSR();
+}
+
+// Test 10 — Two concurrent startRecognition() calls while VAD init is pending → SR starts exactly once
+{
+  _forTesting.reset();
+  recState.isRecording = true; recState.isPaused = true;
+  let resolveGUM10, startCount10 = 0;
+  _forTesting.setGetUserMedia(() => new Promise(r => resolveGUM10 = r));
+  _forTesting.setSR(makeMockSR(() => startCount10++));
+
+  const initP10 = _forTesting.ensureVADInitialized();   // GUM pending (gen=0)
+  // Two concurrent starts — _startPending blocks the second immediately
+  const [startP10a, startP10b] = [startRecognition(''), startRecognition('')];
+  resolveGUM10({ getTracks: () => [{ stop() {} }] });    // let GUM settle
+  const [r10a, r10b] = await Promise.all([startP10a, startP10b]);
+  await initP10;
+  assert('T10: exactly one start returned true', [r10a, r10b].filter(Boolean).length, 1);
+  assert('T10: SR started exactly once', startCount10, 1);
+  assertFalsy('T10: _startPending cleared after start', _forTesting.getInternalState().startPending);
+  _forTesting.clearGetUserMedia(); _forTesting.clearSR();
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 const summary = document.getElementById('summary');
 summary.textContent = `${pass} passed, ${fail} failed`;

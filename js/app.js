@@ -248,8 +248,13 @@ recHandlers.onVADInitFailed = async () => {
   acquireWakeLock();
 };
 
-// VAD init timed out — getUserMedia never resolved; save draft and ask user to reload.
+// VAD init timed out — getUserMedia never resolved; stop everything, show idle UI, ask user to reload.
 recHandlers.onVADInitTimeout = () => {
+  stopRecognition();
+  releaseWakeLock();
+  clearSilenceTimer();
+  stopSilenceBar();
+  showIdleUI();
   showToast('גישה למיקרופון מתעכבת — יש לרענן את האפליקציה ולהתחיל מחדש');
   const text = els.transcript.value.trim();
   if (text) saveDraft({ finalText: text, interimText: '', activeSessionId });

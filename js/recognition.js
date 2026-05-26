@@ -47,6 +47,7 @@ let _transitionGeneration = 0;   // incremented by resume/stop to cancel all pen
 let _vadInitPromise = null;       // single-flight guard: at most one _initVAD in progress
 let _vadInitGeneration = -1;      // generation of _vadInitPromise; stale promise never reused
 let _resumePending = false;       // true while async VAD release + SR restart is in progress
+let _startPending = false;        // true while async startRecognition is in progress
 let _getUserMediaOverride = null; // test injection only; null in production
 let _SROverride = null;           // test injection only; null in production
 let _vadInitTimeoutMs = 5000;     // ms to wait for pending VAD init before declaring timeout
@@ -455,6 +456,7 @@ function _init() {
 function _kill() {
   _transitionGeneration++;
   _resumePending = false;
+  _startPending = false;
   state.isRecording = false;
   state.isPaused = false;
   _restartPending = false;
@@ -482,33 +484,42 @@ function _restart() {
 }
 
 export async function startRecognition(existingText = '') {
-  _transitionGeneration++;
-  if (_vadInitPromise) {
-    const settled = await _waitForVADInit();
-    if (!settled) return false;
-  }
-  await _releaseVAD();
-  state.finalText = existingText;
-  state.sessionFinalText = '';
-  state.isRecording = true;
-  state.isPaused = false;
-  _restartPending = false;
-  _errCount = 0;
-  _silentStreak = 0;
-  if (!_init()) { state.isRecording = false; return false; }
+  if (_startPending) return false;
+  _startPending = true;
+  const myGen = ++_transitionGeneration;
   try {
-    _rec.start();
-    return true;
-  } catch (e) {
-    console.error('[recognition] initial start failed', e);
-    state.isRecording = false;
-    return false;
+    if (_vadInitPromise) {
+      const settled = await _waitForVADInit();
+      if (!settled) return false;
+    }
+    await _releaseVAD();
+    // Re-check after awaits: stop() or another start() may have superseded this call.
+    if (_transitionGeneration !== myGen) return false;
+    state.finalText = existingText;
+    state.sessionFinalText = '';
+    state.isRecording = true;
+    state.isPaused = false;
+    _restartPending = false;
+    _errCount = 0;
+    _silentStreak = 0;
+    if (!_init()) { state.isRecording = false; return false; }
+    try {
+      _rec.start();
+      return true;
+    } catch (e) {
+      console.error('[recognition] initial start failed', e);
+      state.isRecording = false;
+      return false;
+    }
+  } finally {
+    if (_transitionGeneration === myGen) _startPending = false;
   }
 }
 
 export function stopRecognition() {
   _transitionGeneration++;
   _resumePending = false;
+  _startPending = false;
   state.isRecording = false;
   state.isPaused = false;
   _restartPending = false;
@@ -556,7 +567,7 @@ export async function resumeRecognition() {
 
 export const _forTesting = {
   reset() {
-    _resumePending = false; _transitionGeneration = 0; _vadInitPromise = null;
+    _resumePending = false; _startPending = false; _transitionGeneration = 0; _vadInitPromise = null;
     _vadInitGeneration = -1; _getUserMediaOverride = null; _SROverride = null;
     _vadStream = null; _vadContext = null; _vadAnalyser = null; _vadTimer = null;
     _restartPending = false; _errCount = 0; _silentStreak = 0;
@@ -566,7 +577,7 @@ export const _forTesting = {
   },
   getInternalState() {
     return { vadStream: _vadStream, vadContext: _vadContext, vadAnalyser: _vadAnalyser,
-             vadTimer: _vadTimer, resumePending: _resumePending,
+             vadTimer: _vadTimer, resumePending: _resumePending, startPending: _startPending,
              transitionGeneration: _transitionGeneration };
   },
   ensureVADInitialized: () => _ensureVADInitialized(),
