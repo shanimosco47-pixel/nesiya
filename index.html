@@ -1,728 +1,335 @@
 <!DOCTYPE html>
-<html lang="he" dir="rtl">
+<html lang="he" dir="rtl" class="dark">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>נסיעה - הקלטת מחשבות</title>
-  <link rel="manifest" href="manifest.json">
-  <link rel="apple-touch-icon" href="icon.svg">
-  <meta name="theme-color" content="#0a0a0f">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="נסיעה">
-  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;900&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --bg: #0a0a0f;
-      --surface: #13131a;
-      --surface2: #1c1c28;
-      --border: #2a2a3d;
-      --accent: #4f8ef7;
-      --accent-glow: rgba(79,142,247,0.3);
-      --red: #f74f4f;
-      --red-glow: rgba(247,79,79,0.3);
-      --green: #4ff7a0;
-      --text: #e8e8f0;
-      --text-dim: #8888a0;
-      --text-muted: #4a4a60;
-      --radius: 16px;
-    }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-    button, .icon-btn, .session-btn, .close-btn { touch-action: manipulation; }
-
-    body {
-      font-family: 'Heebo', sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100dvh;
-      display: flex;
-      flex-direction: column;
-      overflow: hidden;
-    }
-
-    /* ── HEADER ── */
-    header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 16px 20px 12px;
-      border-bottom: 1px solid var(--border);
-      background: var(--surface);
-      gap: 12px;
-      flex-shrink: 0;
-    }
-
-    .app-title {
-      font-size: 20px;
-      font-weight: 900;
-      letter-spacing: -0.5px;
-      color: var(--text);
-    }
-
-    .status-pill {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      padding: 5px 12px;
-      border-radius: 99px;
-      font-size: 13px;
-      font-weight: 500;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      transition: all 0.3s;
-      white-space: nowrap;
-    }
-
-    .status-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--text-muted);
-      transition: all 0.3s;
-    }
-
-    .status-pill.recording .status-dot {
-      background: var(--red);
-      box-shadow: 0 0 8px var(--red-glow);
-      animation: pulse-dot 1.2s ease-in-out infinite;
-    }
-
-    .status-pill.recording {
-      border-color: var(--red);
-      color: var(--red);
-    }
-
-    .status-pill.paused .status-dot { background: #f7c84f; }
-    .status-pill.paused { border-color: #f7c84f; color: #f7c84f; }
-
-    @keyframes pulse-dot {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50% { opacity: 0.5; transform: scale(0.7); }
-    }
-
-    .header-actions {
-      display: flex;
-      gap: 8px;
-    }
-
-    .icon-btn {
-      width: 36px;
-      height: 36px;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-      background: var(--surface2);
-      color: var(--text-dim);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      font-size: 16px;
-      transition: all 0.2s;
-    }
-
-    .icon-btn:active { transform: scale(0.93); }
-    .icon-btn.active { border-color: var(--accent); color: var(--accent); }
-
-    #btn-history { width: 52px; height: 52px; font-size: 24px; }
-
-    /* ── SEARCH BAR ── */
-    #search-bar {
-      display: none;
-      padding: 10px 16px;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-
-    #search-bar.visible { display: flex; gap: 8px; align-items: center; }
-
-    #search-input {
-      flex: 1;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 8px 12px;
-      color: var(--text);
-      font-family: 'Heebo', sans-serif;
-      font-size: 15px;
-      outline: none;
-      direction: rtl;
-    }
-
-    #search-input:focus { border-color: var(--accent); }
-    #search-input::placeholder { color: var(--text-muted); }
-
-    .search-count {
-      font-size: 13px;
-      color: var(--text-dim);
-      white-space: nowrap;
-    }
-
-    /* ── TRANSCRIPT AREA ── */
-    #transcript-wrap {
-      flex: 1;
-      min-height: 0;
-      overflow-y: auto;
-      padding: 16px;
-      -webkit-overflow-scrolling: touch;
-      display: flex;
-      flex-direction: column;
-    }
-
-    #transcript-edit {
-      flex: 1;
-      min-height: 200px;
-      background: transparent;
-      border: none;
-      outline: none;
-      resize: none;
-      font-family: 'Heebo', sans-serif;
-      font-size: 24px;
-      line-height: 1.7;
-      color: var(--text);
-      direction: rtl;
-      text-align: right;
-    }
-
-    #transcript-edit::placeholder { color: var(--text-muted); }
-
-    mark {
-      background: rgba(79,142,247,0.35);
-      color: var(--text);
-      border-radius: 3px;
-    }
-
-    /* Interim text (live, not yet finalized) */
-    #interim-display {
-      display: none;
-    }
-
-    /* ── SESSION LIST ── */
-    #sessions-panel {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: var(--bg);
-      z-index: 100;
-      flex-direction: column;
-    }
-
-    #sessions-panel.open { display: flex; }
-
-    .panel-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 16px 20px;
-      border-bottom: 1px solid var(--border);
-      background: var(--surface);
-      flex-shrink: 0;
-    }
-
-    .panel-title { font-size: 18px; font-weight: 700; }
-
-    .close-btn {
-      font-size: 22px;
-      cursor: pointer;
-      color: var(--text-dim);
-      width: 36px;
-      height: 36px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    #sessions-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .session-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 14px;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .session-card:active { transform: scale(0.98); border-color: var(--accent); }
-
-    .session-date {
-      font-size: 13px;
-      color: var(--text-dim);
-      margin-bottom: 6px;
-    }
-
-    .session-preview {
-      font-size: 15px;
-      color: var(--text);
-      line-height: 1.5;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-
-    .session-actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 10px;
-    }
-
-    .session-btn {
-      flex: 1;
-      padding: 7px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--surface2);
-      color: var(--text-dim);
-      font-size: 13px;
-      font-family: 'Heebo', sans-serif;
-      cursor: pointer;
-      text-align: center;
-      transition: all 0.2s;
-    }
-
-    .session-btn.danger { color: var(--red); border-color: var(--red); background: rgba(247,79,79,0.08); }
-    .session-btn.primary { color: var(--accent); border-color: var(--accent); background: rgba(79,142,247,0.08); }
-    .session-btn.success { color: var(--green); border-color: var(--green); background: rgba(79,247,160,0.08); }
-
-    .empty-state {
-      text-align: center;
-      color: var(--text-muted);
-      padding: 60px 20px;
-      font-size: 16px;
-    }
-
-    /* ── BOTTOM CONTROLS ── */
-    #controls {
-      padding: 16px;
-      background: var(--surface);
-      border-top: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      flex-shrink: 0;
-    }
-
-    .main-btn {
-      width: 100%;
-      padding: 18px;
-      border-radius: var(--radius);
-      border: none;
-      font-family: 'Heebo', sans-serif;
-      font-size: 18px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-    }
-
-    .main-btn:active { transform: scale(0.97); }
-
-    #btn-start {
-      background: var(--accent);
-      color: #fff;
-      box-shadow: 0 4px 24px var(--accent-glow);
-    }
-
-    #btn-pause {
-      background: var(--surface2);
-      color: #f7c84f;
-      border: 1px solid #f7c84f;
-    }
-
-    #btn-stop {
-      background: var(--surface2);
-      color: var(--red);
-      border: 1px solid var(--red);
-    }
-
-    .secondary-btns {
-      display: flex;
-      gap: 10px;
-    }
-
-    .sec-btn {
-      flex: 1;
-      padding: 13px;
-      border-radius: var(--radius);
-      border: 1px solid var(--border);
-      background: var(--surface2);
-      color: var(--text-dim);
-      font-family: 'Heebo', sans-serif;
-      font-size: 15px;
-      font-weight: 500;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 7px;
-      transition: all 0.2s;
-    }
-
-    .sec-btn:active { transform: scale(0.97); }
-    .sec-btn.gdocs { color: var(--accent); border-color: var(--accent); }
-    .sec-btn.gdocs:disabled { color: var(--text-muted); border-color: var(--border); }
-
-    /* ── SILENCE COUNTDOWN ── */
-    #silence-bar-wrap {
-      height: 3px;
-      background: var(--surface2);
-      border-radius: 99px;
-      overflow: hidden;
-      display: none;
-    }
-
-    #silence-bar-wrap.visible { display: block; }
-
-    #silence-bar {
-      height: 100%;
-      background: var(--accent);
-      width: 100%;
-      transition: width 1s linear;
-    }
-
-    /* ── TOAST ── */
-    #toast {
-      position: fixed;
-      bottom: 100px;
-      left: 50%;
-      transform: translateX(-50%) translateY(20px);
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 10px 20px;
-      border-radius: 99px;
-      font-size: 14px;
-      opacity: 0;
-      transition: all 0.3s;
-      pointer-events: none;
-      white-space: nowrap;
-      z-index: 200;
-    }
-
-    #toast.show {
-      opacity: 1;
-      transform: translateX(-50%) translateY(0);
-    }
-
-    /* ── SESSION VIEWER ── */
-    #session-viewer {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: var(--bg);
-      z-index: 150;
-      flex-direction: column;
-    }
-
-    #session-viewer.open { display: flex; }
-
-    #session-viewer-content {
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px;
-      font-size: 17px;
-      line-height: 1.8;
-      direction: rtl;
-      text-align: right;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-
-    .viewer-footer {
-      display: flex;
-      gap: 10px;
-      padding: 12px 16px;
-      background: var(--surface);
-      border-top: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-
-    /* ── UPDATE BANNER ── */
-    #update-banner {
-      display: none;
-      background: var(--accent);
-      color: #fff;
-      text-align: center;
-      padding: 9px 16px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      flex-shrink: 0;
-    }
-
-    /* ── DIAGNOSTIC PANEL ── */
-    #diag-panel {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: var(--bg);
-      z-index: 100;
-      flex-direction: column;
-    }
-
-    #diag-panel.open { display: flex; }
-
-    #diag-log-content {
-      flex: 1;
-      overflow-y: auto;
-      padding: 12px 16px;
-      margin: 0;
-      font-family: 'Courier New', monospace;
-      font-size: 11px;
-      line-height: 1.5;
-      color: var(--text-dim);
-      white-space: pre-wrap;
-      word-break: break-all;
-      direction: ltr;
-      text-align: left;
-    }
-
-    /* Export buttons in panel header */
-    .export-btn {
-      width: auto;
-      padding: 0 10px;
-      font-size: 11px;
-      font-family: 'Heebo', sans-serif;
-      height: 32px;
-      letter-spacing: 0;
-    }
-
-    /* Recovery modal */
-    .modal-overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(10,10,15,0.88);
-      z-index: 400;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 20px;
-    }
-
-    .modal-card {
-      background: var(--surface);
-      border: 1px solid var(--accent);
-      border-radius: var(--radius);
-      padding: 20px;
-      max-width: 400px;
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-      box-shadow: 0 8px 40px rgba(0,0,0,0.5);
-    }
-
-    .modal-title { font-size: 17px; font-weight: 700; }
-
-    .modal-subtitle {
-      font-size: 12px;
-      color: var(--text-dim);
-    }
-
-    .modal-preview {
-      font-size: 14px;
-      color: var(--text);
-      line-height: 1.6;
-      max-height: 130px;
-      overflow-y: auto;
-      background: var(--surface2);
-      border-radius: 8px;
-      padding: 10px;
-      direction: rtl;
-      text-align: right;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-
-    .modal-actions { display: flex; flex-direction: column; gap: 8px; }
-
-    .modal-label { font-size: 12px; font-weight: 500; color: var(--text-dim); margin-bottom: 4px; }
-    .modal-label.interim { color: #f7c84f; }
-
-    .modal-preview.interim {
-      color: #f7c84f;
-      border: 1px solid rgba(247,200,79,0.25);
-      background: rgba(247,200,79,0.04);
-    }
-
-    .modal-include-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-top: 6px;
-      font-size: 13px;
-      color: var(--text-dim);
-      cursor: pointer;
-    }
-
-    .modal-include-row input[type=checkbox] {
-      accent-color: var(--accent);
-      width: 16px;
-      height: 16px;
-      flex-shrink: 0;
-    }
-
-    .modal-warn {
-      font-size: 13px;
-      color: var(--red);
-      background: rgba(247,79,79,0.08);
-      border: 1px solid rgba(247,79,79,0.25);
-      border-radius: 8px;
-      padding: 8px 10px;
-      margin-top: 6px;
-    }
-
-    /* Scrollbar */
-    ::-webkit-scrollbar { width: 4px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>נסיעה</title>
+
+    <!-- PWA Manifest & iOS Support -->
+    <link rel="manifest" href='data:application/manifest+json,{"name":"נסיעה","short_name":"נסיעה","start_url":"./index.html","display":"standalone","background_color":"#0a0a0f","theme_color":"#0a0a0f","orientation":"portrait","icons":[{"src":"data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%232563eb%22/><text y=%22.9em%22 font-size=%2290%22>🎙️</text></svg>","sizes":"512x512","type":"image/svg+xml"}]}'>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .modal { display: none; }
+        .modal.active { display: flex !important; }
+        body { -webkit-tap-highlight-color: transparent; }
+    </style>
 </head>
-<body>
+<body class="bg-[#0a0a0f] text-white p-4 h-screen flex flex-col justify-between select-none">
 
-<!-- HEADER -->
-<header>
-  <div class="app-title">🚗 נסיעה</div>
-  <div class="status-pill" id="status-pill">
-    <div class="status-dot"></div>
-    <span id="status-text">מוכן</span>
-  </div>
-  <div class="header-actions">
-    <div class="icon-btn" id="btn-search" title="חיפוש">🔍</div>
-    <div class="icon-btn" id="btn-diag" title="לוג אבחון">🐞</div>
-    <div class="icon-btn" id="btn-history" title="היסטוריה">📋</div>
-  </div>
-</header>
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-28 left-1/2 transform -translate-x-1/2 bg-gray-800 border border-gray-700 text-white px-4 py-2.5 rounded-2xl text-xs shadow-xl transition-all duration-300 opacity-0 pointer-events-none z-50 flex items-center gap-2"></div>
 
-<!-- UPDATE BANNER -->
-<div id="update-banner" onclick="location.reload()">🔄 גרסה חדשה זמינה — לחץ לרענון</div>
+    <!-- Header -->
+    <header class="flex justify-between items-center py-2">
+        <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></span>
+            <h1 class="text-lg font-bold tracking-tight">נסיעה v7.0</h1>
+        </div>
+        <div class="flex gap-2">
+            <button id="btn-history" class="text-xs bg-gray-800 hover:bg-gray-700 active:scale-95 transition-all px-4 py-1.5 rounded-full font-medium">היסטוריה</button>
+            <button id="btn-settings" class="text-xs bg-gray-800 hover:bg-gray-700 active:scale-95 transition-all px-4 py-1.5 rounded-full font-medium">הגדרות</button>
+        </div>
+    </header>
 
-<!-- SEARCH BAR -->
-<div id="search-bar">
-  <input type="text" id="search-input" placeholder="חפש בטקסט..." autocomplete="off">
-  <span class="search-count" id="search-count"></span>
-</div>
+    <!-- Main Workspace -->
+    <div class="flex-1 flex flex-col my-2 gap-2">
+        <div class="flex justify-between items-center">
+            <span class="text-xs text-gray-400 font-medium">תמליל פעיל</span>
+            <div class="flex gap-2">
+                <button id="btn-new" class="text-xs bg-blue-900/30 text-blue-300 hover:bg-blue-900/50 active:scale-95 transition-all px-3 py-1 rounded-xl font-bold">שיחה חדשה</button>
+                <button id="btn-copy" class="text-xs bg-gray-800 text-gray-300 hover:bg-gray-700 active:scale-95 transition-all px-3 py-1 rounded-xl font-bold">העתק טקסט</button>
+            </div>
+        </div>
 
-<!-- INTERIM (live preview) -->
-<div id="interim-display"></div>
+        <textarea id="output" class="flex-1 w-full bg-gray-900/50 border border-gray-800/80 p-4 rounded-2xl text-lg outline-none resize-none focus:border-blue-500 transition-all leading-relaxed" placeholder="התמלול יופיע כאן בזמן אמת..."></textarea>
 
-<!-- TRANSCRIPT -->
-<div id="transcript-wrap">
-  <textarea id="transcript-edit" placeholder="לחץ על התחל והתחל לדבר...&#10;הטקסט יופיע כאן בזמן אמת."></textarea>
-</div>
-
-<!-- SILENCE BAR -->
-<div id="silence-bar-wrap">
-  <div id="silence-bar"></div>
-</div>
-
-<!-- CONTROLS -->
-<div id="controls">
-  <button class="main-btn" id="btn-start">🎙️ הקלטה חדשה</button>
-  <button class="main-btn" id="btn-continue" style="display:none">▶️ המשך הקלטה</button>
-  <button class="main-btn" id="btn-pause" style="display:none">⏸ השהה</button>
-  <div class="secondary-btns">
-    <button class="sec-btn" id="btn-stop" style="display:none">⏹ סיים</button>
-    <button class="sec-btn gdocs" id="btn-gdocs" disabled>📋 פתח Docs והעתק</button>
-  </div>
-  <div id="build-stamp" style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:2px"></div>
-</div>
-
-<!-- SESSIONS PANEL -->
-<div id="sessions-panel">
-  <div class="panel-header">
-    <span class="panel-title">📋 הקלטות שמורות</span>
-    <div style="display:flex;gap:6px;align-items:center">
-      <button class="icon-btn export-btn" id="btn-export-json" title="ייצוא JSON">JSON ↓</button>
-      <button class="icon-btn export-btn" id="btn-export-md" title="ייצוא Markdown">MD ↓</button>
-      <button class="icon-btn export-btn" id="btn-copy-diag" title="העתק לוג אבחון">🐞</button>
-      <div class="close-btn" id="close-sessions">✕</div>
-    </div>
-  </div>
-  <div id="sessions-list"></div>
-</div>
-
-<!-- SESSION VIEWER -->
-<div id="session-viewer">
-  <div class="panel-header">
-    <span class="panel-title" id="viewer-title"></span>
-    <div class="close-btn" id="close-viewer">✕</div>
-  </div>
-  <div id="session-viewer-content"></div>
-  <div class="viewer-footer">
-    <button class="sec-btn" id="btn-viewer-new">🎙️ הקלטה חדשה</button>
-    <button class="sec-btn gdocs" id="btn-viewer-continue">▶️ המשך הקלטה זו</button>
-  </div>
-</div>
-
-<!-- DIAGNOSTIC PANEL -->
-<div id="diag-panel">
-  <div class="panel-header">
-    <span class="panel-title">🐞 לוג אבחון</span>
-    <div style="display:flex;gap:6px;align-items:center">
-      <button class="icon-btn export-btn" id="btn-diag-copy" title="העתק ללוח">📋</button>
-      <button class="icon-btn export-btn" id="btn-diag-clear" title="נקה לוג">🗑️</button>
-      <div class="close-btn" id="close-diag">✕</div>
-    </div>
-  </div>
-  <pre id="diag-log-content"></pre>
-</div>
-
-<!-- TOAST -->
-<div id="toast"></div>
-
-<!-- CRASH RECOVERY MODAL -->
-<div id="recovery-modal" class="modal-overlay" style="display:none">
-  <div class="modal-card">
-    <div class="modal-title">📝 טיוטה שלא נשמרה</div>
-
-    <!-- New format: confirmed text -->
-    <div id="recovery-final-wrap">
-      <div class="modal-label">טקסט מאושר:</div>
-      <div class="modal-preview" id="recovery-final"></div>
+        <div id="debug-log" class="text-[10px] text-gray-500 bg-black/40 p-3 rounded-xl h-16 overflow-y-auto font-mono border border-gray-900">
+            מערכת מוכנה לעבודה.
+        </div>
     </div>
 
-    <!-- New format: unconfirmed interim text (hidden when none) -->
-    <div id="recovery-interim-section" style="display:none">
-      <div class="modal-label interim">טקסט חלקי שלא אושר:</div>
-      <div class="modal-preview interim" id="recovery-interim"></div>
-      <label class="modal-include-row">
-        <input type="checkbox" id="recovery-include-interim">
-        <span>כלול טקסט חלקי בשמירה / המשך</span>
-      </label>
+    <!-- Controls -->
+    <footer class="flex flex-col gap-3 pb-2">
+        <button id="record-btn" class="w-full py-6 bg-blue-600 active:scale-[0.98] transition-all rounded-2xl font-bold text-xl shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2">
+            <span id="record-icon" class="w-3 h-3 rounded-full bg-white"></span>
+            <span id="record-text">התחל הקלטה</span>
+        </button>
+        <div id="status" class="text-center text-gray-400 text-xs font-medium h-4">מוכן</div>
+    </footer>
+
+    <!-- History Modal -->
+    <div id="history-modal" class="modal fixed inset-0 bg-black/95 z-50 items-center justify-center p-4">
+        <div class="bg-gray-800 p-6 rounded-2xl w-full max-w-lg border border-gray-700 flex flex-col h-[80vh]">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold">היסטוריית הקלטות</h2>
+                <button id="btn-close-history" class="text-xs bg-gray-700 px-4 py-1.5 rounded-full font-medium active:scale-95 transition-all">סגור</button>
+            </div>
+            <div id="history-list" class="flex-1 overflow-y-auto space-y-3 pr-1"></div>
+        </div>
     </div>
 
-    <!-- Legacy format: combined text, cannot separate confirmed from unconfirmed -->
-    <div id="recovery-legacy-wrap" style="display:none">
-      <div class="modal-subtitle">הטקסט עשוי לכלול מילים לא מאושרות מסוף ההקלטה</div>
-      <div class="modal-preview" id="recovery-preview"></div>
-      <label class="modal-include-row">
-        <input type="checkbox" id="recovery-include-legacy">
-        <span>אני מבין שהטקסט עשוי לכלול מילים חלקיות, וכלול אותו בשמירה / בהמשך</span>
-      </label>
-      <div id="recovery-legacy-warn" class="modal-warn" style="display:none">יש לסמן את תיבת האישור לפני המשך הפעולה</div>
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal fixed inset-0 bg-black/90 z-50 items-center justify-center p-4">
+        <form id="settings-form" class="bg-gray-800 p-6 rounded-2xl w-full max-w-sm border border-gray-700">
+            <h2 class="text-lg font-bold mb-1">הגדרות API</h2>
+            <p class="text-xs text-gray-400 mb-4">המפתח נשמר בדפדפן שלך בלבד ואינו נשלח לשום שרת חיצוני פרט ל-OpenAI.</p>
+            <input type="password" id="api-key-input"
+                   autocomplete="current-password"
+                   placeholder="sk-proj-..."
+                   class="w-full bg-gray-900 border border-gray-700 p-3 rounded-xl mb-4 text-sm text-white focus:border-blue-500 outline-none">
+            <div class="flex gap-2">
+                <button type="submit" class="flex-1 py-3 bg-blue-600 rounded-xl font-bold active:scale-95 transition-all">שמור וזכור אותי</button>
+                <button type="button" id="btn-close-settings" class="px-4 py-3 bg-gray-700 rounded-xl font-medium active:scale-95 transition-all">ביטול</button>
+            </div>
+        </form>
     </div>
 
-    <div class="modal-actions">
-      <button class="main-btn" id="btn-recovery-continue">🎙️ המשך הקלטה</button>
-      <button class="sec-btn" id="btn-recovery-save">💾 שמור כהקלטה</button>
-      <button class="sec-btn" style="color:var(--red);border-color:var(--red)" id="btn-recovery-discard">🗑️ מחק טיוטה</button>
-    </div>
-  </div>
-</div>
+    <script>
+        window.onload = () => {
+            const logEl = document.getElementById('debug-log');
+            const toastEl = document.getElementById('toast');
 
-<script type="module" src="./js/app.js"></script>
+            const log = (msg) => {
+                logEl.innerHTML += `<br>> ${msg}`;
+                logEl.scrollTop = logEl.scrollHeight;
+                console.log(msg);
+            };
+
+            const showToast = (msg) => {
+                toastEl.textContent = msg;
+                toastEl.className = "fixed bottom-28 left-1/2 transform -translate-x-1/2 bg-gray-800 border border-gray-700 text-white px-4 py-2.5 rounded-2xl text-xs shadow-xl transition-all duration-300 opacity-100 z-50 flex items-center gap-2";
+                setTimeout(() => {
+                    toastEl.className = "fixed bottom-28 left-1/2 transform -translate-x-1/2 bg-gray-800 border border-gray-700 text-white px-4 py-2.5 rounded-2xl text-xs shadow-xl transition-all duration-300 opacity-0 pointer-events-none z-50 flex items-center gap-2";
+                }, 2500);
+            };
+
+            const getApiKey = () => localStorage.getItem('OPENAI_API_KEY');
+            const setApiKey = (key) => localStorage.setItem('OPENAI_API_KEY', key);
+
+            const getHistory = () => {
+                try { return JSON.parse(localStorage.getItem('nesiya_history')) || []; }
+                catch (e) { return []; }
+            };
+
+            const saveHistory = (history) => {
+                localStorage.setItem('nesiya_history', JSON.stringify(history));
+            };
+
+            const saveCurrentToHistory = (silent = false) => {
+                const text = output.value.trim();
+                if (!text) return null;
+                const history = getHistory();
+                const currentId = localStorage.getItem('nesiya_current_id');
+                if (currentId) {
+                    const index = history.findIndex(item => item.id === currentId);
+                    if (index !== -1) {
+                        history[index].text = text;
+                        history[index].timestamp = new Date().toLocaleString('he-IL');
+                        saveHistory(history);
+                        if (!silent) showToast("השיחה הנוכחית עודכנה בהיסטוריה");
+                        return currentId;
+                    }
+                }
+                const newId = 'session_' + Date.now();
+                history.unshift({ id: newId, timestamp: new Date().toLocaleString('he-IL'), text });
+                saveHistory(history);
+                localStorage.setItem('nesiya_current_id', newId);
+                if (!silent) showToast("שיחה חדשה נשמרה בהיסטוריה");
+                return newId;
+            };
+
+            const renderHistory = () => {
+                const history = getHistory();
+                const listEl = document.getElementById('history-list');
+                listEl.innerHTML = '';
+                if (history.length === 0) {
+                    listEl.innerHTML = '<div class="text-center text-gray-500 py-8 text-sm">אין הקלטות שמורות בהיסטוריה.</div>';
+                    return;
+                }
+                history.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = "bg-gray-900/60 border border-gray-800 p-4 rounded-xl flex flex-col gap-2";
+                    const snippet = item.text.length > 100 ? item.text.substring(0, 100) + '...' : item.text;
+                    card.innerHTML = `
+                        <div class="flex justify-between items-center border-b border-gray-800/50 pb-2">
+                            <span class="text-xs text-blue-400 font-mono font-bold">${item.timestamp}</span>
+                            <button class="delete-btn text-xs text-red-400 bg-red-950/20 hover:bg-red-950/50 px-2 py-1 rounded-lg" data-id="${item.id}">מחק</button>
+                        </div>
+                        <p class="text-sm text-gray-300 leading-relaxed break-words">${snippet}</p>
+                        <div class="flex justify-end mt-1">
+                            <button class="load-btn text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg font-bold" data-id="${item.id}">טען והמשך</button>
+                        </div>`;
+                    listEl.appendChild(card);
+                });
+                document.querySelectorAll('.delete-btn').forEach(btn => {
+                    btn.onclick = (e) => {
+                        const id = e.target.getAttribute('data-id');
+                        const updated = getHistory().filter(item => item.id !== id);
+                        saveHistory(updated);
+                        if (localStorage.getItem('nesiya_current_id') === id) localStorage.removeItem('nesiya_current_id');
+                        renderHistory();
+                        showToast("הקלטה נמחקה");
+                    };
+                });
+                document.querySelectorAll('.load-btn').forEach(btn => {
+                    btn.onclick = (e) => {
+                        const id = e.target.getAttribute('data-id');
+                        saveCurrentToHistory(true);
+                        const item = getHistory().find(item => item.id === id);
+                        if (item) {
+                            output.value = item.text;
+                            localStorage.setItem('nesiya_draft', item.text);
+                            localStorage.setItem('nesiya_current_id', item.id);
+                            document.getElementById('history-modal').classList.remove('active');
+                            showToast("שיחה נטענה מחדש");
+                        }
+                    };
+                });
+            };
+
+            const modal = document.getElementById('settings-modal');
+            const historyModal = document.getElementById('history-modal');
+            const form = document.getElementById('settings-form');
+            const apiInput = document.getElementById('api-key-input');
+            const status = document.getElementById('status');
+
+            const savedDraft = localStorage.getItem('nesiya_draft');
+            if (savedDraft) document.getElementById('output').value = savedDraft;
+
+            if (!getApiKey()) modal.classList.add('active');
+
+            document.getElementById('btn-settings').onclick = () => {
+                apiInput.value = getApiKey() || '';
+                modal.classList.add('active');
+            };
+
+            document.getElementById('btn-close-settings').onclick = () => modal.classList.remove('active');
+
+            document.getElementById('btn-history').onclick = () => {
+                renderHistory();
+                historyModal.classList.add('active');
+            };
+
+            document.getElementById('btn-close-history').onclick = () => historyModal.classList.remove('active');
+
+            form.onsubmit = (e) => {
+                e.preventDefault();
+                const key = apiInput.value.trim();
+                if (key) {
+                    setApiKey(key);
+                    modal.classList.remove('active');
+                    log("מפתח API עודכן ונשמר בהצלחה.");
+                }
+            };
+
+            document.getElementById('btn-copy').onclick = () => {
+                const text = output.value.trim();
+                if (!text) { showToast("אין טקסט להעתקה"); return; }
+                try {
+                    const temp = document.createElement('textarea');
+                    temp.value = text;
+                    document.body.appendChild(temp);
+                    temp.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(temp);
+                    showToast("הטקסט הועתק ללוח!");
+                } catch (e) { showToast("שגיאה במערכת ההעתקה"); }
+            };
+
+            document.getElementById('btn-new').onclick = () => {
+                if (isRunning) { showToast("עצור את ההקלטה הנוכחית תחילה"); return; }
+                if (output.value.trim()) saveCurrentToHistory(true);
+                output.value = '';
+                localStorage.removeItem('nesiya_draft');
+                localStorage.removeItem('nesiya_current_id');
+                showToast("התחילה שיחה חדשה והקודמת נשמרה");
+            };
+
+            const btn = document.getElementById('record-btn');
+            const recordIcon = document.getElementById('record-icon');
+            const recordText = document.getElementById('record-text');
+            const outputEl = document.getElementById('output');
+            let isRunning = false;
+            let wakeLock = null;
+
+            async function startLoop() {
+                if (!getApiKey()) { modal.classList.add('active'); return; }
+                isRunning = true;
+                recordText.textContent = "עצור הקלטה";
+                recordIcon.className = "w-3 h-3 rounded-full bg-white animate-ping";
+                btn.className = "w-full py-6 bg-red-600 active:scale-[0.98] transition-all rounded-2xl font-bold text-xl shadow-lg shadow-red-900/20 flex items-center justify-center gap-2";
+                try {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    log("נעילת מסך (WakeLock) פעילה.");
+                } catch (err) { log("WakeLock לא נתמך בדפדפן זה."); }
+
+                while (isRunning) {
+                    try {
+                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+                        let chunks = [];
+                        mediaRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+                        mediaRecorder.start();
+                        log("הקלטת מקטע החלה...");
+                        status.textContent = "מקליט...";
+                        await new Promise((resolve) => {
+                            const timeout = setTimeout(resolve, 20000);
+                            const checker = setInterval(() => {
+                                if (!isRunning) { clearTimeout(timeout); clearInterval(checker); resolve(); }
+                            }, 200);
+                        });
+                        mediaRecorder.stop();
+                        stream.getTracks().forEach(t => t.stop());
+                        await new Promise(r => mediaRecorder.onstop = r);
+                        if (chunks.length > 0) sendToWhisper(new Blob(chunks, { type: 'audio/webm' }));
+                    } catch (e) {
+                        log("שגיאת הקלטה: " + e.message);
+                        stopRecording();
+                    }
+                }
+            }
+
+            function stopRecording() {
+                isRunning = false;
+                if (wakeLock) wakeLock.release().then(() => wakeLock = null);
+                recordText.textContent = "התחל הקלטה";
+                recordIcon.className = "w-3 h-3 rounded-full bg-white";
+                btn.className = "w-full py-6 bg-blue-600 active:scale-[0.98] transition-all rounded-2xl font-bold text-xl shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2";
+                status.textContent = "מוכן";
+                log("ההקלטה נעצרה.");
+                saveCurrentToHistory(true);
+            }
+
+            async function sendToWhisper(blob) {
+                log(`שולח קובץ שמע לשרת (${(blob.size / 1024).toFixed(1)} KB)...`);
+                const formData = new FormData();
+                formData.append('file', blob, 'audio.webm');
+                formData.append('model', 'whisper-1');
+                try {
+                    const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${getApiKey()}` },
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (data.text) {
+                        log("התקבל תמלול מוצלח.");
+                        outputEl.value += (outputEl.value ? " " : "") + data.text;
+                        localStorage.setItem('nesiya_draft', outputEl.value);
+                        saveCurrentToHistory(true);
+                    } else if (data.error) {
+                        log("שגיאת API: " + data.error.message);
+                    }
+                } catch (e) {
+                    log("שגיאת רשת בשליחה: " + e.message);
+                }
+            }
+
+            btn.onclick = () => { if (isRunning) stopRecording(); else startLoop(); };
+        };
+    </script>
 </body>
 </html>
