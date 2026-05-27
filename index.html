@@ -4,12 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>נסיעה</title>
-    
+
     <!-- PWA Manifest & iOS Support -->
     <link rel="manifest" href='data:application/manifest+json,{"name":"נסיעה","short_name":"נסיעה","start_url":"./index.html","display":"standalone","background_color":"#0a0a0f","theme_color":"#0a0a0f","orientation":"portrait","icons":[{"src":"data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%232563eb%22/><text y=%22.9em%22 font-size=%2290%22>🎙️</text></svg>","sizes":"512x512","type":"image/svg+xml"}]}'>
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    
+
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .modal { display: none; }
@@ -18,10 +18,9 @@
     </style>
 </head>
 <body class="bg-[#0a0a0f] text-white p-4 h-screen flex flex-col justify-between select-none">
-    
+
     <!-- Toast Notification -->
     <div id="toast" class="fixed bottom-28 left-1/2 transform -translate-x-1/2 bg-gray-800 border border-gray-700 text-white px-4 py-2.5 rounded-2xl text-xs shadow-xl transition-all duration-300 opacity-0 pointer-events-none z-50 flex items-center gap-2"></div>
-
 
     <!-- Header -->
     <header class="flex justify-between items-center py-2">
@@ -31,10 +30,8 @@
         </div>
         <div class="flex gap-2">
             <button id="btn-history" class="text-xs bg-gray-800 hover:bg-gray-700 active:scale-95 transition-all px-4 py-1.5 rounded-full font-medium">היסטוריה</button>
-            <button id="btn-settings" class="text-xs bg-gray-800 hover:bg-gray-700 active:scale-95 transition-all px-4 py-1.5 rounded-full font-medium">הגדרות</button>
         </div>
     </header>
-
 
     <!-- Main Workspace -->
     <div class="flex-1 flex flex-col my-2 gap-2">
@@ -47,15 +44,13 @@
             </div>
         </div>
 
-
         <textarea id="output" class="flex-1 w-full bg-gray-900/50 border border-gray-800/80 p-4 rounded-2xl text-lg outline-none resize-none focus:border-blue-500 transition-all leading-relaxed" placeholder="התמלול יופיע כאן בזמן אמת..."></textarea>
-        
+
         <!-- Logs Panel -->
         <div id="debug-log" class="text-[10px] text-gray-500 bg-black/40 p-3 rounded-xl h-16 overflow-y-auto font-mono border border-gray-900">
             מערכת מוכנה לעבודה.
         </div>
     </div>
-
 
     <!-- Controls -->
     <footer class="flex flex-col gap-3 pb-2">
@@ -65,7 +60,6 @@
         </button>
         <div id="status" class="text-center text-gray-400 text-xs font-medium h-4">מוכן</div>
     </footer>
-
 
     <!-- History Modal -->
     <div id="history-modal" class="modal fixed inset-0 bg-black/95 z-50 items-center justify-center p-4">
@@ -80,35 +74,16 @@
         </div>
     </div>
 
-
-    <!-- Settings Modal -->
-    <div id="settings-modal" class="modal fixed inset-0 bg-black/90 z-50 items-center justify-center p-4">
-        <form id="settings-form" class="bg-gray-800 p-6 rounded-2xl w-full max-w-sm border border-gray-700">
-            <h2 class="text-lg font-bold mb-1">הגדרות API</h2>
-            <p class="text-xs text-gray-400 mb-4">המפתח נשמר בדפדפן שלך בלבד ואינו נשלח לשום שרת חיצוני פרט ל-OpenAI.</p>
-            <input type="password" id="api-key-input" 
-                   autocomplete="current-password" 
-                   placeholder="sk-proj-..." 
-                   class="w-full bg-gray-900 border border-gray-700 p-3 rounded-xl mb-4 text-sm text-white focus:border-blue-500 outline-none">
-            <div class="flex gap-2">
-                <button type="submit" class="flex-1 py-3 bg-blue-600 rounded-xl font-bold active:scale-95 transition-all">שמור וזכור אותי</button>
-                <button type="button" id="btn-close-settings" class="px-4 py-3 bg-gray-700 rounded-xl font-medium active:scale-95 transition-all">ביטול</button>
-            </div>
-        </form>
-    </div>
-
-
     <script>
         window.onload = () => {
             const logEl = document.getElementById('debug-log');
             const toastEl = document.getElementById('toast');
-            
+
             const log = (msg) => {
                 logEl.innerHTML += `<br>> ${msg}`;
                 logEl.scrollTop = logEl.scrollHeight;
                 console.log(msg);
             };
-
 
             const showToast = (msg) => {
                 toastEl.textContent = msg;
@@ -118,11 +93,6 @@
                 }, 2500);
             };
 
-
-            const getApiKey = () => localStorage.getItem('OPENAI_API_KEY');
-            const setApiKey = (key) => localStorage.setItem('OPENAI_API_KEY', key);
-
-
             // History Functions
             const getHistory = () => {
                 try {
@@ -131,21 +101,19 @@
                     return [];
                 }
             };
-            
+
             const saveHistory = (history) => {
                 localStorage.setItem('nesiya_history', JSON.stringify(history));
             };
 
-
             const saveCurrentToHistory = (silent = false) => {
                 const text = output.value.trim();
                 if (!text) return null;
-                
+
                 const history = getHistory();
                 const currentId = localStorage.getItem('nesiya_current_id');
-                
+
                 if (currentId) {
-                    // Update existing
                     const index = history.findIndex(item => item.id === currentId);
                     if (index !== -1) {
                         history[index].text = text;
@@ -155,8 +123,7 @@
                         return currentId;
                     }
                 }
-                
-                // Create new entry
+
                 const newId = 'session_' + Date.now();
                 history.unshift({
                     id: newId,
@@ -169,23 +136,22 @@
                 return newId;
             };
 
-
             const renderHistory = () => {
                 const history = getHistory();
                 const listEl = document.getElementById('history-list');
                 listEl.innerHTML = '';
-                
+
                 if (history.length === 0) {
                     listEl.innerHTML = '<div class="text-center text-gray-500 py-8 text-sm">אין הקלטות שמורות בהיסטוריה.</div>';
                     return;
                 }
-                
+
                 history.forEach(item => {
                     const card = document.createElement('div');
                     card.className = "bg-gray-900/60 border border-gray-800 p-4 rounded-xl flex flex-col gap-2";
-                    
+
                     const snippet = item.text.length > 100 ? item.text.substring(0, 100) + '...' : item.text;
-                    
+
                     card.innerHTML = `
                         <div class="flex justify-between items-center border-b border-gray-800/50 pb-2">
                             <span class="text-xs text-blue-400 font-mono font-bold">${item.timestamp}</span>
@@ -196,36 +162,27 @@
                             <button class="load-btn text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-lg font-bold" data-id="${item.id}">טען והמשך</button>
                         </div>
                     `;
-                    
+
                     listEl.appendChild(card);
                 });
 
-
-                // Attach event listeners dynamically
                 document.querySelectorAll('.delete-btn').forEach(btn => {
                     btn.onclick = (e) => {
                         const id = e.target.getAttribute('data-id');
                         const updated = getHistory().filter(item => item.id !== id);
                         saveHistory(updated);
-                        
-                        // If we deleted the active item, remove active tracking
                         if (localStorage.getItem('nesiya_current_id') === id) {
                             localStorage.removeItem('nesiya_current_id');
                         }
-                        
                         renderHistory();
                         showToast("הקלטה נמחקה");
                     };
                 });
 
-
                 document.querySelectorAll('.load-btn').forEach(btn => {
                     btn.onclick = (e) => {
                         const id = e.target.getAttribute('data-id');
-                        
-                        // Auto-save current if there's text
                         saveCurrentToHistory(true);
-                        
                         const item = getHistory().find(item => item.id === id);
                         if (item) {
                             output.value = item.text;
@@ -238,14 +195,8 @@
                 });
             };
 
-
-            const modal = document.getElementById('settings-modal');
             const historyModal = document.getElementById('history-modal');
-            const form = document.getElementById('settings-form');
-            const apiInput = document.getElementById('api-key-input');
             const status = document.getElementById('status');
-            const btnCloseSettings = document.getElementById('btn-close-settings');
-
 
             // Load saved draft on load
             const savedDraft = localStorage.getItem('nesiya_draft');
@@ -253,44 +204,14 @@
                 document.getElementById('output').value = savedDraft;
             }
 
-
-            if (!getApiKey()) {
-                modal.classList.add('active');
-            }
-
-
-            document.getElementById('btn-settings').onclick = () => {
-                apiInput.value = getApiKey() || '';
-                modal.classList.add('active');
-            };
-
-
-            btnCloseSettings.onclick = () => {
-                modal.classList.remove('active');
-            };
-
-
             document.getElementById('btn-history').onclick = () => {
                 renderHistory();
                 historyModal.classList.add('active');
             };
 
-
             document.getElementById('btn-close-history').onclick = () => {
                 historyModal.classList.remove('active');
             };
-
-
-            form.onsubmit = (e) => {
-                e.preventDefault();
-                const key = apiInput.value.trim();
-                if (key) {
-                    setApiKey(key);
-                    modal.classList.remove('active');
-                    log("מפתח API עודכן ונשמר בהצלחה.");
-                }
-            };
-
 
             // Copy Action
             document.getElementById('btn-copy').onclick = () => {
@@ -299,7 +220,6 @@
                     showToast("אין טקסט להעתקה");
                     return;
                 }
-                
                 try {
                     const temp = document.createElement('textarea');
                     temp.value = text;
@@ -313,68 +233,56 @@
                 }
             };
 
-
             // Start New Conversation Action
             document.getElementById('btn-new').onclick = () => {
                 if (isRunning) {
                     showToast("עצור את ההקלטה הנוכחית תחילה");
                     return;
                 }
-                
                 if (output.value.trim()) {
                     saveCurrentToHistory(true);
                 }
-                
                 output.value = '';
                 localStorage.removeItem('nesiya_draft');
                 localStorage.removeItem('nesiya_current_id');
                 showToast("התחילה שיחה חדשה והקודמת נשמרה");
             };
 
-
             const btn = document.getElementById('record-btn');
             const recordIcon = document.getElementById('record-icon');
             const recordText = document.getElementById('record-text');
             const outputEl = document.getElementById('output');
-            
+
             let isRunning = false;
             let wakeLock = null;
 
-
             async function startLoop() {
-                if (!getApiKey()) {
-                    modal.classList.add('active');
-                    return;
-                }
-
-
                 isRunning = true;
                 recordText.textContent = "עצור הקלטה";
                 recordIcon.className = "w-3 h-3 rounded-full bg-white animate-ping";
                 btn.className = "w-full py-6 bg-red-600 active:scale-[0.98] transition-all rounded-2xl font-bold text-xl shadow-lg shadow-red-900/20 flex items-center justify-center gap-2";
-                
+
                 try {
                     wakeLock = await navigator.wakeLock.request('screen');
                     log("נעילת מסך (WakeLock) פעילה.");
-                } catch (err) { 
-                    log("WakeLock לא נתמך בדפדפן זה."); 
+                } catch (err) {
+                    log("WakeLock לא נתמך בדפדפן זה.");
                 }
-                
+
                 while (isRunning) {
                     try {
                         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                         const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
                         let chunks = [];
-                        
+
                         mediaRecorder.ondataavailable = e => {
                             if (e.data && e.data.size > 0) chunks.push(e.data);
                         };
-                        
+
                         mediaRecorder.start();
                         log("הקלטת מקטע החלה...");
                         status.textContent = "מקליט...";
-                        
-                        // Wait 20 seconds or until stopped
+
                         await new Promise((resolve) => {
                             const timeout = setTimeout(resolve, 20000);
                             const checker = setInterval(() => {
@@ -385,22 +293,21 @@
                                 }
                             }, 200);
                         });
-                        
+
                         mediaRecorder.stop();
                         stream.getTracks().forEach(t => t.stop());
                         await new Promise(r => mediaRecorder.onstop = r);
-                        
+
                         if (chunks.length > 0) {
                             const blob = new Blob(chunks, { type: 'audio/webm' });
                             sendToWhisper(blob);
                         }
-                    } catch(e) {
+                    } catch (e) {
                         log("שגיאת הקלטה: " + e.message);
                         stopRecording();
                     }
                 }
             }
-
 
             function stopRecording() {
                 isRunning = false;
@@ -412,26 +319,20 @@
                 btn.className = "w-full py-6 bg-blue-600 active:scale-[0.98] transition-all rounded-2xl font-bold text-xl shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2";
                 status.textContent = "מוכן";
                 log("ההקלטה נעצרה.");
-                
-                // Save progress immediately on stop
                 saveCurrentToHistory(true);
             }
-
 
             async function sendToWhisper(blob) {
                 log(`שולח קובץ שמע לשרת (${(blob.size / 1024).toFixed(1)} KB)...`);
                 const formData = new FormData();
                 formData.append('file', blob, 'audio.webm');
-                formData.append('model', 'whisper-1');
-
 
                 try {
-                    const res = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+                    const res = await fetch('/api/transcribe', {
                         method: 'POST',
-                        headers: { 'Authorization': `Bearer ${getApiKey()}` },
                         body: formData
                     });
-                    
+
                     const data = await res.json();
                     if (data.text) {
                         log("התקבל תמלול מוצלח.");
@@ -445,7 +346,6 @@
                     log("שגיאת רשת בשליחה: " + e.message);
                 }
             }
-
 
             btn.onclick = () => {
                 if (isRunning) {
