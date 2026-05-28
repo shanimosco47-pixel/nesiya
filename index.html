@@ -26,6 +26,7 @@
             <h1 class="text-lg font-bold tracking-tight">נסיעה v7.0</h1>
         </div>
         <div class="flex gap-2">
+            <button id="btn-logs" class="text-xs bg-gray-800 hover:bg-gray-700 active:scale-95 transition-all px-4 py-1.5 rounded-full font-medium">לוגים</button>
             <button id="btn-history" class="text-xs bg-gray-800 hover:bg-gray-700 active:scale-95 transition-all px-4 py-1.5 rounded-full font-medium">היסטוריה</button>
         </div>
     </header>
@@ -41,7 +42,7 @@
 
         <textarea id="output" class="flex-1 w-full bg-gray-900/50 border border-gray-800/80 p-4 rounded-2xl text-lg outline-none resize-none focus:border-blue-500 transition-all leading-relaxed" placeholder="התמלול יופיע כאן בזמן אמת..."></textarea>
 
-        <div id="debug-log" class="text-[10px] text-gray-500 bg-black/40 p-3 rounded-xl h-16 overflow-y-auto font-mono border border-gray-900">
+        <div id="debug-log" class="text-[10px] text-gray-500 bg-black/40 p-3 rounded-xl h-12 overflow-y-auto font-mono border border-gray-900 cursor-pointer" id="debug-log-mini">
             מערכת מוכנה לעבודה.
         </div>
     </div>
@@ -53,6 +54,21 @@
         </button>
         <div id="status" class="text-center text-gray-400 text-xs font-medium h-4">מוכן</div>
     </footer>
+
+    <!-- Logs Modal -->
+    <div id="logs-modal" class="modal fixed inset-0 bg-black/95 z-50 items-center justify-center p-4">
+        <div class="bg-gray-800 p-6 rounded-2xl w-full max-w-lg border border-gray-700 flex flex-col h-[80vh]">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold">לוגים</h2>
+                <div class="flex gap-2">
+                    <button id="btn-copy-logs" class="text-xs bg-blue-600 hover:bg-blue-500 px-4 py-1.5 rounded-full font-medium active:scale-95 transition-all">העתק לוגים</button>
+                    <button id="btn-clear-logs" class="text-xs bg-gray-700 hover:bg-gray-600 px-4 py-1.5 rounded-full font-medium active:scale-95 transition-all">נקה</button>
+                    <button id="btn-close-logs" class="text-xs bg-gray-700 px-4 py-1.5 rounded-full font-medium active:scale-95 transition-all">סגור</button>
+                </div>
+            </div>
+            <div id="logs-list" class="flex-1 overflow-y-auto font-mono text-[11px] space-y-1 pr-1"></div>
+        </div>
+    </div>
 
     <!-- History Modal -->
     <div id="history-modal" class="modal fixed inset-0 bg-black/95 z-50 items-center justify-center p-4">
@@ -71,10 +87,25 @@
         window.onload = () => {
             const logEl = document.getElementById('debug-log');
             const toastEl = document.getElementById('toast');
+            const logsListEl = document.getElementById('logs-list');
+            const logEntries = [];
 
             const log = (msg) => {
+                const now = new Date();
+                const ts = now.toLocaleDateString('he-IL') + ' ' + now.toLocaleTimeString('he-IL');
+                const entry = { ts, msg };
+                logEntries.push(entry);
+
+                // update mini bar
                 logEl.innerHTML += `<br>> ${msg}`;
                 logEl.scrollTop = logEl.scrollHeight;
+
+                // update logs modal if open
+                const row = document.createElement('div');
+                row.className = 'flex gap-2 py-0.5 border-b border-gray-700/30';
+                row.innerHTML = `<span class="text-gray-500 shrink-0">${ts}</span><span class="text-green-400 break-all">${msg}</span>`;
+                logsListEl.appendChild(row);
+                logsListEl.scrollTop = logsListEl.scrollHeight;
             };
 
             const showToast = (msg) => {
@@ -94,7 +125,6 @@
                 try { return JSON.parse(localStorage.getItem('nesiya_history')) || []; }
                 catch (e) { return []; }
             };
-
             const saveHistory = (history) => localStorage.setItem('nesiya_history', JSON.stringify(history));
 
             const saveCurrentToHistory = (silent = false) => {
@@ -168,9 +198,33 @@
                 });
             };
 
+            // Logs modal
+            const logsModal = document.getElementById('logs-modal');
+            document.getElementById('btn-logs').onclick = () => logsModal.classList.add('active');
+            document.getElementById('btn-close-logs').onclick = () => logsModal.classList.remove('active');
+            document.getElementById('btn-clear-logs').onclick = () => {
+                logEntries.length = 0;
+                logsListEl.innerHTML = '';
+                logEl.textContent = 'מערכת מוכנה לעבודה.';
+                showToast("לוגים ננקו");
+            };
+            document.getElementById('btn-copy-logs').onclick = () => {
+                if (!logEntries.length) { showToast("אין לוגים"); return; }
+                const text = logEntries.map(e => `[${e.ts}] ${e.msg}`).join('\n');
+                try {
+                    const temp = document.createElement('textarea');
+                    temp.value = text;
+                    document.body.appendChild(temp);
+                    temp.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(temp);
+                    showToast("לוגים הועתקו ללוח!");
+                } catch (e) { showToast("שגיאה בהעתקה"); }
+            };
+
+            // History modal
             const historyModal = document.getElementById('history-modal');
             const status = document.getElementById('status');
-
             const savedDraft = localStorage.getItem('nesiya_draft');
             if (savedDraft) document.getElementById('output').value = savedDraft;
 
@@ -281,6 +335,8 @@
             }
 
             btn.onclick = () => { if (isRunning) stopRecording(); else startLoop(); };
+
+            log("מערכת מוכנה לעבודה.");
         };
     </script>
 </body>
