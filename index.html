@@ -26,6 +26,7 @@
             <h1 class="text-lg font-bold tracking-tight">נסיעה v7.0</h1>
         </div>
         <div class="flex gap-2">
+            <button id="btn-settings" class="text-xs bg-gray-800 hover:bg-gray-700 active:scale-95 transition-all px-3 py-1.5 rounded-full font-medium" title="הגדרות">⚙</button>
             <button id="btn-logs" class="text-xs bg-gray-800 hover:bg-gray-700 active:scale-95 transition-all px-4 py-1.5 rounded-full font-medium">לוגים</button>
             <button id="btn-history" class="text-xs bg-gray-800 hover:bg-gray-700 active:scale-95 transition-all px-4 py-1.5 rounded-full font-medium">היסטוריה</button>
         </div>
@@ -42,7 +43,7 @@
 
         <textarea id="output" class="flex-1 w-full bg-gray-900/50 border border-gray-800/80 p-4 rounded-2xl text-lg outline-none resize-none focus:border-blue-500 transition-all leading-relaxed" placeholder="התמלול יופיע כאן בזמן אמת..."></textarea>
 
-        <div id="debug-log" class="text-[10px] text-gray-500 bg-black/40 p-3 rounded-xl h-12 overflow-y-auto font-mono border border-gray-900 cursor-pointer" id="debug-log-mini">
+        <div id="debug-log" class="text-[10px] text-gray-500 bg-black/40 p-3 rounded-xl h-12 overflow-y-auto font-mono border border-gray-900 cursor-pointer">
             מערכת מוכנה לעבודה.
         </div>
     </div>
@@ -54,6 +55,26 @@
         </button>
         <div id="status" class="text-center text-gray-400 text-xs font-medium h-4">מוכן</div>
     </footer>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal fixed inset-0 bg-black/95 z-50 items-center justify-center p-4">
+        <div class="bg-gray-800 p-6 rounded-2xl w-full max-w-sm border border-gray-700 flex flex-col gap-4">
+            <div class="flex justify-between items-center">
+                <h2 class="text-lg font-bold">הגדרות</h2>
+                <button id="btn-close-settings" class="text-xs bg-gray-700 px-4 py-1.5 rounded-full font-medium active:scale-95 transition-all">סגור</button>
+            </div>
+            <div id="key-status" class="text-xs px-3 py-2 rounded-xl font-mono"></div>
+            <div class="flex flex-col gap-2">
+                <label class="text-sm text-gray-400">מפתח OpenAI API</label>
+                <input id="api-key-input" type="password" placeholder="sk-proj-..." class="w-full bg-gray-900 border border-gray-700 focus:border-blue-500 outline-none px-4 py-3 rounded-xl text-sm font-mono transition-all" autocomplete="off" autocorrect="off" spellcheck="false">
+                <p class="text-[11px] text-gray-500">המפתח נשמר רק בדפדפן שלך (localStorage) ואינו נשלח לשרת.</p>
+            </div>
+            <div class="flex gap-2">
+                <button id="btn-save-key" class="flex-1 bg-blue-600 hover:bg-blue-500 active:scale-95 transition-all py-2.5 rounded-xl text-sm font-bold">שמור</button>
+                <button id="btn-clear-key" class="bg-gray-700 hover:bg-gray-600 active:scale-95 transition-all px-4 py-2.5 rounded-xl text-sm font-medium">מחק</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Logs Modal -->
     <div id="logs-modal" class="modal fixed inset-0 bg-black/95 z-50 items-center justify-center p-4">
@@ -95,12 +116,8 @@
                 const ts = now.toLocaleDateString('he-IL') + ' ' + now.toLocaleTimeString('he-IL');
                 const entry = { ts, msg };
                 logEntries.push(entry);
-
-                // update mini bar
                 logEl.innerHTML += `<br>> ${msg}`;
                 logEl.scrollTop = logEl.scrollHeight;
-
-                // update logs modal if open
                 const row = document.createElement('div');
                 row.className = 'flex gap-2 py-0.5 border-b border-gray-700/30';
                 row.innerHTML = `<span class="text-gray-500 shrink-0">${ts}</span><span class="text-green-400 break-all">${msg}</span>`;
@@ -121,6 +138,84 @@
                 return localStorage.getItem('OPENAI_API_KEY');
             };
 
+            // Settings modal
+            const settingsModal = document.getElementById('settings-modal');
+            const keyStatusEl = document.getElementById('key-status');
+            const apiKeyInput = document.getElementById('api-key-input');
+
+            const updateKeyStatus = () => {
+                const injected = INJECTED_API_KEY && !INJECTED_API_KEY.includes('%%');
+                const local = localStorage.getItem('OPENAI_API_KEY');
+                if (injected) {
+                    keyStatusEl.textContent = '✓ מפתח מוזרק מה-CI (פעיל)';
+                    keyStatusEl.className = 'text-xs px-3 py-2 rounded-xl font-mono bg-green-950/40 text-green-400 border border-green-900/50';
+                } else if (local) {
+                    keyStatusEl.textContent = '✓ מפתח שמור ב-localStorage (פעיל)';
+                    keyStatusEl.className = 'text-xs px-3 py-2 rounded-xl font-mono bg-blue-950/40 text-blue-400 border border-blue-900/50';
+                } else {
+                    keyStatusEl.textContent = '✗ אין מפתח — יש להזין למטה';
+                    keyStatusEl.className = 'text-xs px-3 py-2 rounded-xl font-mono bg-red-950/40 text-red-400 border border-red-900/50';
+                }
+            };
+
+            const openSettings = () => { updateKeyStatus(); apiKeyInput.value = ''; settingsModal.classList.add('active'); };
+
+            document.getElementById('btn-settings').onclick = openSettings;
+            document.getElementById('btn-close-settings').onclick = () => settingsModal.classList.remove('active');
+
+            document.getElementById('btn-save-key').onclick = () => {
+                const val = apiKeyInput.value.trim();
+                if (!val || !val.startsWith('sk-')) { showToast('מפתח לא תקין — חייב להתחיל ב-sk-'); return; }
+                localStorage.setItem('OPENAI_API_KEY', val);
+                apiKeyInput.value = '';
+                updateKeyStatus();
+                settingsModal.classList.remove('active');
+                showToast('מפתח נשמר בהצלחה!');
+            };
+
+            document.getElementById('btn-clear-key').onclick = () => {
+                localStorage.removeItem('OPENAI_API_KEY');
+                apiKeyInput.value = '';
+                updateKeyStatus();
+                showToast('מפתח נמחק');
+            };
+
+            // Auto-open settings if no key on load
+            if (!getApiKey()) {
+                setTimeout(() => openSettings(), 300);
+            }
+
+            // Logs modal
+            const logsModal = document.getElementById('logs-modal');
+            document.getElementById('btn-logs').onclick = () => logsModal.classList.add('active');
+            document.getElementById('btn-close-logs').onclick = () => logsModal.classList.remove('active');
+            document.getElementById('btn-clear-logs').onclick = () => {
+                logEntries.length = 0;
+                logsListEl.innerHTML = '';
+                logEl.textContent = 'מערכת מוכנה לעבודה.';
+                showToast('לוגים ננקו');
+            };
+            document.getElementById('btn-copy-logs').onclick = () => {
+                if (!logEntries.length) { showToast('אין לוגים'); return; }
+                const text = logEntries.map(e => `[${e.ts}] ${e.msg}`).join('\n');
+                try {
+                    const temp = document.createElement('textarea');
+                    temp.value = text;
+                    document.body.appendChild(temp);
+                    temp.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(temp);
+                    showToast('לוגים הועתקו ללוח!');
+                } catch (e) { showToast('שגיאה בהעתקה'); }
+            };
+
+            // History modal
+            const historyModal = document.getElementById('history-modal');
+            const output = document.getElementById('output');
+            const status = document.getElementById('status');
+            const savedDraft = localStorage.getItem('nesiya_draft');
+            if (savedDraft) output.value = savedDraft;
+
             const getHistory = () => {
                 try { return JSON.parse(localStorage.getItem('nesiya_history')) || []; }
                 catch (e) { return []; }
@@ -138,7 +233,7 @@
                         history[index].text = text;
                         history[index].timestamp = new Date().toLocaleString('he-IL');
                         saveHistory(history);
-                        if (!silent) showToast("השיחה עודכנה בהיסטוריה");
+                        if (!silent) showToast('השיחה עודכנה בהיסטוריה');
                         return currentId;
                     }
                 }
@@ -146,7 +241,7 @@
                 history.unshift({ id: newId, timestamp: new Date().toLocaleString('he-IL'), text });
                 saveHistory(history);
                 localStorage.setItem('nesiya_current_id', newId);
-                if (!silent) showToast("שיחה נשמרה בהיסטוריה");
+                if (!silent) showToast('שיחה נשמרה בהיסטוריה');
                 return newId;
             };
 
@@ -179,7 +274,7 @@
                         saveHistory(getHistory().filter(item => item.id !== id));
                         if (localStorage.getItem('nesiya_current_id') === id) localStorage.removeItem('nesiya_current_id');
                         renderHistory();
-                        showToast("הקלטה נמחקה");
+                        showToast('הקלטה נמחקה');
                     };
                 });
                 document.querySelectorAll('.load-btn').forEach(btn => {
@@ -192,48 +287,18 @@
                             localStorage.setItem('nesiya_draft', item.text);
                             localStorage.setItem('nesiya_current_id', item.id);
                             document.getElementById('history-modal').classList.remove('active');
-                            showToast("שיחה נטענה מחדש");
+                            showToast('שיחה נטענה מחדש');
                         }
                     };
                 });
             };
-
-            // Logs modal
-            const logsModal = document.getElementById('logs-modal');
-            document.getElementById('btn-logs').onclick = () => logsModal.classList.add('active');
-            document.getElementById('btn-close-logs').onclick = () => logsModal.classList.remove('active');
-            document.getElementById('btn-clear-logs').onclick = () => {
-                logEntries.length = 0;
-                logsListEl.innerHTML = '';
-                logEl.textContent = 'מערכת מוכנה לעבודה.';
-                showToast("לוגים ננקו");
-            };
-            document.getElementById('btn-copy-logs').onclick = () => {
-                if (!logEntries.length) { showToast("אין לוגים"); return; }
-                const text = logEntries.map(e => `[${e.ts}] ${e.msg}`).join('\n');
-                try {
-                    const temp = document.createElement('textarea');
-                    temp.value = text;
-                    document.body.appendChild(temp);
-                    temp.select();
-                    document.execCommand('copy');
-                    document.body.removeChild(temp);
-                    showToast("לוגים הועתקו ללוח!");
-                } catch (e) { showToast("שגיאה בהעתקה"); }
-            };
-
-            // History modal
-            const historyModal = document.getElementById('history-modal');
-            const status = document.getElementById('status');
-            const savedDraft = localStorage.getItem('nesiya_draft');
-            if (savedDraft) document.getElementById('output').value = savedDraft;
 
             document.getElementById('btn-history').onclick = () => { renderHistory(); historyModal.classList.add('active'); };
             document.getElementById('btn-close-history').onclick = () => historyModal.classList.remove('active');
 
             document.getElementById('btn-copy').onclick = () => {
                 const text = output.value.trim();
-                if (!text) { showToast("אין טקסט להעתקה"); return; }
+                if (!text) { showToast('אין טקסט להעתקה'); return; }
                 try {
                     const temp = document.createElement('textarea');
                     temp.value = text;
@@ -241,17 +306,17 @@
                     temp.select();
                     document.execCommand('copy');
                     document.body.removeChild(temp);
-                    showToast("הטקסט הועתק ללוח!");
-                } catch (e) { showToast("שגיאה בהעתקה"); }
+                    showToast('הטקסט הועתק ללוח!');
+                } catch (e) { showToast('שגיאה בהעתקה'); }
             };
 
             document.getElementById('btn-new').onclick = () => {
-                if (isRunning) { showToast("עצור את ההקלטה תחילה"); return; }
+                if (isRunning) { showToast('עצור את ההקלטה תחילה'); return; }
                 if (output.value.trim()) saveCurrentToHistory(true);
                 output.value = '';
                 localStorage.removeItem('nesiya_draft');
                 localStorage.removeItem('nesiya_current_id');
-                showToast("שיחה חדשה התחילה");
+                showToast('שיחה חדשה התחילה');
             };
 
             const btn = document.getElementById('record-btn');
@@ -262,15 +327,15 @@
             let wakeLock = null;
 
             async function startLoop() {
-                if (!getApiKey()) { showToast("מפתח API חסר"); return; }
+                if (!getApiKey()) { openSettings(); return; }
                 isRunning = true;
-                recordText.textContent = "עצור הקלטה";
-                recordIcon.className = "w-3 h-3 rounded-full bg-white animate-ping";
-                btn.className = "w-full py-6 bg-red-600 active:scale-[0.98] transition-all rounded-2xl font-bold text-xl shadow-lg shadow-red-900/20 flex items-center justify-center gap-2";
+                recordText.textContent = 'עצור הקלטה';
+                recordIcon.className = 'w-3 h-3 rounded-full bg-white animate-ping';
+                btn.className = 'w-full py-6 bg-red-600 active:scale-[0.98] transition-all rounded-2xl font-bold text-xl shadow-lg shadow-red-900/20 flex items-center justify-center gap-2';
                 try {
                     wakeLock = await navigator.wakeLock.request('screen');
-                    log("נעילת מסך פעילה.");
-                } catch (err) { log("WakeLock לא נתמך."); }
+                    log('נעילת מסך פעילה.');
+                } catch (err) { log('WakeLock לא נתמך.'); }
 
                 while (isRunning) {
                     try {
@@ -279,8 +344,8 @@
                         let chunks = [];
                         mediaRecorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
                         mediaRecorder.start();
-                        log("הקלטת מקטע החלה...");
-                        status.textContent = "מקליט...";
+                        log('הקלטת מקטע החלה...');
+                        status.textContent = 'מקליט...';
                         await new Promise((resolve) => {
                             const timeout = setTimeout(resolve, 20000);
                             const checker = setInterval(() => {
@@ -292,7 +357,7 @@
                         await new Promise(r => mediaRecorder.onstop = r);
                         if (chunks.length > 0) sendToWhisper(new Blob(chunks, { type: 'audio/webm' }));
                     } catch (e) {
-                        log("שגיאת הקלטה: " + e.message);
+                        log('שגיאת הקלטה: ' + e.message);
                         stopRecording();
                     }
                 }
@@ -301,11 +366,11 @@
             function stopRecording() {
                 isRunning = false;
                 if (wakeLock) wakeLock.release().then(() => wakeLock = null);
-                recordText.textContent = "התחל הקלטה";
-                recordIcon.className = "w-3 h-3 rounded-full bg-white";
-                btn.className = "w-full py-6 bg-blue-600 active:scale-[0.98] transition-all rounded-2xl font-bold text-xl shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2";
-                status.textContent = "מוכן";
-                log("ההקלטה נעצרה.");
+                recordText.textContent = 'התחל הקלטה';
+                recordIcon.className = 'w-3 h-3 rounded-full bg-white';
+                btn.className = 'w-full py-6 bg-blue-600 active:scale-[0.98] transition-all rounded-2xl font-bold text-xl shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2';
+                status.textContent = 'מוכן';
+                log('ההקלטה נעצרה.');
                 saveCurrentToHistory(true);
             }
 
@@ -322,21 +387,21 @@
                     });
                     const data = await res.json();
                     if (data.text) {
-                        log("תמלול התקבל.");
-                        outputEl.value += (outputEl.value ? " " : "") + data.text;
+                        log('תמלול התקבל.');
+                        outputEl.value += (outputEl.value ? ' ' : '') + data.text;
                         localStorage.setItem('nesiya_draft', outputEl.value);
                         saveCurrentToHistory(true);
                     } else if (data.error) {
-                        log("שגיאת API: " + data.error.message);
+                        log('שגיאת API: ' + data.error.message);
                     }
                 } catch (e) {
-                    log("שגיאת רשת: " + e.message);
+                    log('שגיאת רשת: ' + e.message);
                 }
             }
 
             btn.onclick = () => { if (isRunning) stopRecording(); else startLoop(); };
 
-            log("מערכת מוכנה לעבודה.");
+            log('מערכת מוכנה לעבודה.');
         };
     </script>
 </body>
