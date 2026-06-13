@@ -61,15 +61,17 @@ const MIN_OVERLAP_WORDS = 3;
 export function dedupeAppend(existing, addition) {
   if (!addition.trim()) return existing;
   if (!existing.trim()) return addition.trim() + ' ';
+  const leadNL = addition.startsWith('\n') ? '\n' : '';
+  const sep = leadNL || ' ';
   const a = existing.trimEnd().split(/\s+/);
   const b = addition.trim().split(/\s+/);
   for (let len = Math.min(a.length, b.length, 20); len >= MIN_OVERLAP_WORDS; len--) {
     if (a.slice(-len).join(' ') === b.slice(0, len).join(' ')) {
       const rest = b.slice(len).join(' ');
-      return a.join(' ') + (rest ? ' ' + rest : '') + ' ';
+      return a.join(' ') + (rest ? sep + rest : '') + ' ';
     }
   }
-  return existing.trimEnd() + ' ' + addition.trim() + ' ';
+  return existing.trimEnd() + sep + addition.trim() + ' ';
 }
 
 // Strip invisible Unicode bidirectional control characters and normalize to NFC.
@@ -109,13 +111,15 @@ export function collapseSessionFinals(results) {
   let collapsedNorm = '';
   for (let i = 0; i < results.length; i++) {
     if (!results[i].isFinal) continue;
-    const t = results[i][0].transcript.trim();
+    const raw = results[i][0].transcript;
+    const leadNL = raw.startsWith('\n') ? '\n' : '';
+    const t = raw.trim();
     if (!t) continue;
     const tNorm = _norm(t);
     if (!tNorm) continue; // skip punctuation-only slots in this pass
 
     if (!collapsedNorm) {
-      collapsed = t + ' ';
+      collapsed = leadNL + t + ' ';
       collapsedNorm = tNorm;
       continue;
     }
@@ -125,7 +129,7 @@ export function collapseSessionFinals(results) {
     if (tNorm.length >= collapsedNorm.length &&
         tNorm.startsWith(collapsedNorm) &&
         (tNorm.length === collapsedNorm.length || tNorm[collapsedNorm.length] === ' ')) {
-      collapsed = t + ' ';
+      collapsed = leadNL + t + ' ';
       collapsedNorm = tNorm;
       continue;
     }
@@ -150,36 +154,39 @@ export function collapseSessionFinals(results) {
         break;
       }
     }
+    const sep = leadNL || ' ';
     if (overlapLen >= MIN_OVERLAP_WORDS) {
       const rawWords = t.split(/\s+/);
       const rest = rawWords.slice(overlapLen).join(' ');
-      collapsed = collapsed.trimEnd() + (rest ? ' ' + rest : '') + ' ';
+      collapsed = collapsed.trimEnd() + (rest ? sep + rest : '') + ' ';
     } else {
       // No significant overlap — treat as a new distinct segment.
-      collapsed = collapsed + t + ' ';
+      collapsed = collapsed.trimEnd() + sep + t + ' ';
     }
     collapsedNorm = _norm(collapsed.trim());
   }
   return collapsed;
 }
 
-// Return a trailing punctuation or newline suffix from the last isFinal result,
-// but only when the session has real word content (sessionFinal non-empty) — this
-// prevents Chrome's spurious "." or "\n" noise results in silent sessions from
-// corrupting the transcript.
-function _trailingPunct(results, sessionFinal) {
-  if (!sessionFinal.trim()) return '';
+// Return a trailing punctuation or newline suffix from the last isFinal result.
+// When the session has no word content but committedText exists (e.g. user says
+// "נקודה" after a prior sentence), the punct is still returned so the caller can
+// attach it to committedText directly.  Both empty → return '' to prevent spurious
+// punctuation from Chrome noise-only sessions corrupting a blank transcript.
+function _trailingPunct(results, sessionFinal, committedText = '') {
+  if (!sessionFinal.trim() && !committedText.trim()) return '';
+  const refText = sessionFinal.trim() ? sessionFinal : committedText;
   for (let i = results.length - 1; i >= 0; i--) {
     if (!results[i].isFinal) continue;
     const raw = results[i][0].transcript;
     const t = raw.trim();
     if (!t) {
       // Whitespace-only (e.g. "\n" newline command)
-      return (raw && !sessionFinal.endsWith(raw)) ? raw : '';
+      return (raw && !refText.endsWith(raw)) ? raw : '';
     }
     if (!_norm(t)) {
       // Punctuation-only (e.g. "." period command)
-      return !sessionFinal.trimEnd().endsWith(t) ? t : '';
+      return !refText.trimEnd().endsWith(t) ? t : '';
     }
     break; // last isFinal was a word result — no trailing punctuation
   }
@@ -315,27 +322,37 @@ function _init() {
     // Collapse all isFinal word results into a single de-duplicated string.
     const sessionFinal = collapseSessionFinals(e.results);
 
-    // Append trailing punctuation/newline voice command from the last isFinal slot,
-    // but only when the session has real words — prevents spurious punctuation from
-    // Chrome's noise-only sessions (silent sessions where Chrome emits "." or "\n").
-    const punct = _trailingPunct(e.results, sessionFinal);
-    const sessionFinalWithPunct = punct
-      ? sessionFinal.trimEnd() + punct + ' '
-      : sessionFinal;
+    // Append trailing punctuation/newline voice command from the last isFinal slot.
+    // Passing committedText allows punct commands (e.g. "נקודה") fired in a
+    // word-free session to still be applied when prior text exists.
+    const punct = _trailingPunct(e.results, sessionFinal, committedText);
 
-    if (sessionFinalWithPunct.trim()) _sessionHadSpeech = true;
+    let collapsedFinal;
+    if (sessionFinal.trim()) {
+      // Session had word content — attach any trailing punct to session words.
+      const sfwp = punct ? sessionFinal.trimEnd() + punct + ' ' : sessionFinal;
+      if (sfwp.trim()) _sessionHadSpeech = true;
+      state.finalText = dedupeAppend(committedText, sfwp);
+      state.sessionFinalText = sfwp;
+      collapsedFinal = sfwp;
+    } else if (punct) {
+      // Punct/newline-only session — attach directly to avoid dedupeAppend eating
+      // the "\n" (which trims to '') or inserting a space before ".".
+      _sessionHadSpeech = true;
+      const isNL = !punct.trim(); // "\n".trim() === ''
+      state.finalText = committedText.trimEnd() + punct + (isNL ? '' : ' ');
+      state.sessionFinalText = punct;
+      collapsedFinal = punct;
+    } else {
+      state.finalText = committedText;
+      state.sessionFinalText = '';
+      collapsedFinal = '';
+    }
 
     let interim = '';
     for (let i = 0; i < e.results.length; i++) {
       if (!e.results[i].isFinal) interim += e.results[i][0].transcript;
     }
-
-    // Combine with committedText, deduping the inter-session boundary to handle
-    // Chrome Android's session-replay behaviour.
-    state.finalText = sessionFinalWithPunct
-      ? dedupeAppend(committedText, sessionFinalWithPunct)
-      : committedText;
-    state.sessionFinalText = sessionFinalWithPunct;
 
     diagLog('result', {
       id,
@@ -346,7 +363,7 @@ function _init() {
         isFinal: e.results[i].isFinal,
         t: e.results[i][0].transcript.slice(0, 40),
       })),
-      collapsedFinal: sessionFinalWithPunct.trim().slice(0, 80),
+      collapsedFinal: collapsedFinal.trim().slice(0, 80),
       displayLen: (state.finalText + interim).length,
     });
 

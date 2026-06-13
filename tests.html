@@ -840,6 +840,94 @@ section('VAD async race conditions');
   _forTesting.clearGetUserMedia(); _forTesting.clearSR();
 }
 
+// ── Punctuation and newline voice commands ────────────────────────────────────
+section('Punctuation / newline voice commands — full onresult flow');
+
+// Helper: capture the SR instance so tests can fire onresult directly.
+function makeCapturedSR() {
+  let ref = null;
+  const MockSR = class {
+    constructor() { ref = this; }
+    set lang(_) {} set continuous(_) {} set interimResults(_) {} set maxAlternatives(_) {}
+    onresult = null; onerror = null; onend = null;
+    start() {} stop() {}
+  };
+  return { MockSR, getRef: () => ref };
+}
+
+function makeEvent(arr) {
+  const results = arr.map(([transcript, isFinal]) => {
+    const alt = { transcript };
+    return Object.assign([alt], { isFinal, 0: alt, length: 1 });
+  });
+  results.length = arr.length;
+  return { results, resultIndex: 0 };
+}
+
+// Test P1 — "נקודה" after words: "." appended without extra space
+{
+  _forTesting.reset();
+  const { MockSR, getRef } = makeCapturedSR();
+  _forTesting.setSR(MockSR);
+  await startRecognition('שלום עולם ');
+  getRef().onresult(makeEvent([['.', true]]));
+  assert('P1: punct-only session appends "." without space before it',
+    recState.finalText, 'שלום עולם. ');
+  _forTesting.clearSR();
+}
+
+// Test P2 — "שורה חדשה" (newline-only session) inserts "\n"
+{
+  _forTesting.reset();
+  const { MockSR, getRef } = makeCapturedSR();
+  _forTesting.setSR(MockSR);
+  await startRecognition('שלום עולם ');
+  getRef().onresult(makeEvent([['\n', true]]));
+  assert('P2: newline-only session inserts \\n after existing text',
+    recState.finalText, 'שלום עולם\n');
+  _forTesting.clearSR();
+}
+
+// Test P3 — Chrome emits "\nואם": newline preserved before the following word
+{
+  _forTesting.reset();
+  const { MockSR, getRef } = makeCapturedSR();
+  _forTesting.setSR(MockSR);
+  await startRecognition('שלום ');
+  getRef().onresult(makeEvent([['\nואם', true]]));
+  assert('P3: leading \\n in word result is preserved before the word',
+    recState.finalText, 'שלום\nואם ');
+  _forTesting.clearSR();
+}
+
+// Test P4 — Chrome expansion dedup still works after punctuation fix
+{
+  _forTesting.reset();
+  const { MockSR, getRef } = makeCapturedSR();
+  _forTesting.setSR(MockSR);
+  await startRecognition('ראשון שני שלישי ');
+  // Chrome replays committed text then expands
+  getRef().onresult(makeEvent([
+    ['ראשון שני שלישי', true],
+    ['ראשון שני שלישי רביעי', true],
+  ]));
+  assert('P4: Chrome expansion + session-replay dedup still works',
+    recState.finalText, 'ראשון שני שלישי רביעי ');
+  _forTesting.clearSR();
+}
+
+// Test P5 — No spurious "." when transcript is blank (noise guard still active)
+{
+  _forTesting.reset();
+  const { MockSR, getRef } = makeCapturedSR();
+  _forTesting.setSR(MockSR);
+  await startRecognition('');
+  getRef().onresult(makeEvent([['.', true]]));
+  assert('P5: spurious "." with no committed text leaves transcript empty',
+    recState.finalText, '');
+  _forTesting.clearSR();
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 const summary = document.getElementById('summary');
 summary.textContent = `${pass} passed, ${fail} failed`;
