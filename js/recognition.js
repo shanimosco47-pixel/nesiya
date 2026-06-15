@@ -79,6 +79,20 @@ export function dedupeAppend(existing, addition) {
 // false even on visually identical strings.
 const _norm = (s) => s.normalize('NFC').replace(/[^\p{L}\p{N}\s]/gu, '');
 
+// Voice command substitution — replaces spoken Hebrew commands with their
+// intended characters. Applied per-segment before dedup/collapse logic.
+const VOICE_COMMANDS = [
+  { pattern: /שורה חדשה/g,  replacement: '\n' },
+  { pattern: /פסקה חדשה/g,  replacement: '\n\n' },
+];
+function _applyVoiceCommands(text) {
+  let result = text;
+  for (const { pattern, replacement } of VOICE_COMMANDS) {
+    result = result.replace(pattern, replacement);
+  }
+  return result;
+}
+
 // Collapse a SpeechRecognitionResultList into a single de-duplicated string.
 //
 // Chrome Android with continuous=true emits multiple isFinal results that are
@@ -109,7 +123,7 @@ export function collapseSessionFinals(results) {
   let collapsedNorm = '';
   for (let i = 0; i < results.length; i++) {
     if (!results[i].isFinal) continue;
-    const t = results[i][0].transcript.trim();
+    const t = _applyVoiceCommands(results[i][0].transcript.trim());
     if (!t) continue;
     const tNorm = _norm(t);
     if (!tNorm) continue; // skip punctuation-only slots in this pass
